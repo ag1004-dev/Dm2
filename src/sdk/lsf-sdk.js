@@ -676,33 +676,6 @@ export class LSFWrapper {
     }
   };
 
-  draftToast = (status) => {
-    if (status === 200 || status === 201) this.datamanager.invoke("toast", { message: "Draft saved successfully", type: "info" });
-    else if (status !== undefined) this.datamanager.invoke("toast", { message: "There was an error saving your draft", type: "error" });
-  }
-
-  needsDraftSave = (annotation) => {
-    if (annotation.history?.hasChanges && !annotation.draftSaved) return true;
-    if (annotation.history?.hasChanges && new Date(annotation.history.lastAdditionTime) > new Date(annotation.draftSaved)) return true;
-    return false;
-  }
-
-  saveDraft = async (target = null) => {
-    const selected = target || this.lsf?.annotationStore?.selected;
-    const hasChanges = this.needsDraftSave(selected);
-
-    if (selected?.isDraftSaving) {
-      await when(() => !selected.isDraftSaving);
-      this.draftToast(200);
-    }
-    else if (hasChanges && selected) {
-      const res = await selected?.saveDraftImmediatelyWithResults();
-      const status = res?.$meta?.status;
-
-      this.draftToast(status);
-    }
-  };  
-
   onSubmitDraft = async (studio, annotation, params = {}) => {
     const annotationDoesntExist = !annotation.pk;
     const data = { body: this.prepareData(annotation, { draft: true }) }; // serializedAnnotation
