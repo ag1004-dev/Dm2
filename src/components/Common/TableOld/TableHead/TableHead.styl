@@ -9,6 +9,7 @@
   background-color #fff
   min-width fit-content
   font-size 14px
+  border-bottom 1px solid #D8D5DD
 
   &__extra
     flex 1
@@ -21,3 +22,9 @@
     margin-left 10px
     display flex
     align-items center
+
+  &__draggable
+    --translatex 0
+    --translatey 0
+    transform translate(var(--translatex), var(--translatey))
+    cursor move
