@@ -5,20 +5,18 @@ const webpack = require("webpack");
 const Dotenv = require("dotenv-webpack");
 const TerserPlugin = require("terser-webpack-plugin");
 const CssMinimizerPlugin = require("css-minimizer-webpack-plugin");
-const ESLintPlugin = require('eslint-webpack-plugin');
-const { EnvironmentPlugin } = require("webpack");
 
 const workingDirectory = process.env.WORK_DIR
   ? path.resolve(__dirname, process.env.WORK_DIR)
   : path.resolve(__dirname, "build");
 
 if (workingDirectory) {
-  console.log(`Working directory set as ${workingDirectory}`)
+  console.log(`Working directory set as ${workingDirectory}`);
 }
 
 const customDistDir = !!process.env.WORK_DIR;
 
-const DEFAULT_NODE_ENV = process.env.BUILD_MODULE ? 'production' : (process.env.NODE_ENV || 'development')
+const DEFAULT_NODE_ENV = process.env.BUILD_MODULE ? 'production' : (process.env.NODE_ENV || 'development');
 
 const isDevelopment = DEFAULT_NODE_ENV !== "production";
 
@@ -39,7 +37,6 @@ const LOCAL_ENV = {
   NODE_ENV: DEFAULT_NODE_ENV,
   BUILD_NO_SERVER: BUILD.NO_SERVER,
   CSS_PREFIX: "dm-",
-  API_GATEWAY: "http://localhost:8081/api/dm",
   LS_ACCESS_TOKEN: "",
 };
 
@@ -70,7 +67,7 @@ const optimizer = () => {
       new CssMinimizerPlugin({
         parallel: true,
       }),
-    )
+    );
   }
 
   if (BUILD.NO_MINIMIZE) {
@@ -80,7 +77,7 @@ const optimizer = () => {
 
   if (BUILD.NO_CHUNKS) {
     result.runtimeChunk = false;
-    result.splitChunks = {cacheGroups: { default: false }}
+    result.splitChunks = { cacheGroups: { default: false } };
   }
 
   return result;
@@ -132,7 +129,7 @@ const babelLoader = {
   options: {
     presets: [
       ["@babel/preset-react", {
-        "runtime": "automatic"
+        "runtime": "automatic",
       }],
       "@babel/preset-typescript",
       [
@@ -193,12 +190,12 @@ const devServer = () => {
       hot: true,
       port: 9000,
       static: {
-        directory: path.join(__dirname, "public")
+        directory: path.join(__dirname, "public"),
       },
       historyApiFallback: {
         index: "./public/index.html",
       },
-    }
+    },
   } : {};
 };
 
@@ -209,7 +206,6 @@ const plugins = [
     allowEmptyValues: true,
     defaults: "./.env.defaults",
   }),
-  new EnvironmentPlugin(LOCAL_ENV),
   new MiniCssExtractPlugin({
     ...cssOutput(),
   }),
@@ -217,16 +213,11 @@ const plugins = [
 ];
 
 if (isDevelopment) {
-  plugins.push(new ESLintPlugin({
-    fix: true,
-    failOnError: true,
-  }));
-
   plugins.push(new webpack.ProgressPlugin());
 }
 
 if (isDevelopment && !BUILD.NO_SERVER) {
-  plugins.push( new HtmlWebPackPlugin({
+  plugins.push(new HtmlWebPackPlugin({
     title: "Heartex DataManager 2.0",
     template: "public/index.html",
   }));
@@ -236,13 +227,13 @@ if (isDevelopment && !BUILD.NO_SERVER) {
 
 const sourceMap = isDevelopment ? "cheap-module-source-map" : "source-map";
 
-module.exports = ({withDevServer = false} = {}) => ({
+module.exports = ({ withDevServer = false } = {}) => ({
   mode: DEFAULT_NODE_ENV || "development",
   devtool: sourceMap,
   ...(withDevServer ? devServer() : {}),
   entry: {
     main: [
-      path.resolve(__dirname, "src/index.js")
+      path.resolve(__dirname, "src/index.js"),
     ],
   },
   output: {

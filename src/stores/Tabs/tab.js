@@ -14,10 +14,12 @@ import { TabFilter } from "./tab_filter";
 import { TabHiddenColumns } from "./tab_hidden_columns";
 import { TabSelectedItems } from "./tab_selected_items";
 import { History } from '../../utils/history';
+import { FF_LOPS_12, isFF } from "../../utils/feature-flags";
+import { CustomJSON, StringOrNumberID } from "../types";
 
 export const Tab = types
   .model("View", {
-    id: types.identifierNumber,
+    id: StringOrNumberID,
 
     title: "Tasks",
     oldTitle: types.maybeNull(types.string),
@@ -48,11 +50,13 @@ export const Tab = types
     locked: false,
     editable: true,
     deletable: true,
+    semantic_search: types.optional(types.array(CustomJSON), []),
   })
   .volatile(() => {
-    const defaultWidth = window.innerWidth * 0.35;
+    const defaultWidth = getComputedStyle(document.body).getPropertyValue("--menu-sidebar-width").replace("px", "").trim();
+
     const labelingTableWidth = parseInt(
-      localStorage.getItem("labelingTableWidth") ?? defaultWidth,
+      localStorage.getItem("labelingTableWidth") ?? defaultWidth ?? 200,
     );
 
     return {
@@ -143,8 +147,6 @@ export const Tab = types
           type: el.filter.currentType,
         };
 
-        console.log({ filterItem });
-
         filterItem.value = normalizeFilterValue(
           filterItem.type,
           filterItem.operator,
@@ -212,6 +214,7 @@ export const Tab = types
         columnsWidth: self.columnsWidth.toPOJO(),
         columnsDisplayType: self.columnsDisplayType.toPOJO(),
         gridWidth: self.gridWidth,
+        semantic_search: self.semantic_search?.toJSON() ?? [],
       };
 
       if (self.saved || apiVersion === 1) {
@@ -225,6 +228,7 @@ export const Tab = types
         Object.assign(tab, data);
       }
 
+      self.root.SDK.invoke("tabTypeChanged", { tab: tab.id, type: self.type });
       return tab;
     },
   }))
@@ -242,6 +246,7 @@ export const Tab = types
 
     setType(type) {
       self.type = type;
+      self.root.SDK.invoke("tabTypeChanged", { tab: self.id, type });
       self.save();
     },
 
@@ -294,6 +299,11 @@ export const Tab = types
 
     setSelected(ids) {
       self.selected = ids;
+    },
+
+    setSemanticSearch(semanticSearchList) {
+      self.semantic_search = semanticSearchList ?? [];
+      return self.save();
     },
 
     selectAll() {
@@ -359,6 +369,8 @@ export const Tab = types
       }
       if (self.virtual) {
         yield self.dataStore.reload({ query: self.query, interaction });
+      } else if (isFF(FF_LOPS_12) && self.root.SDK.type === 'labelops') {
+        yield self.dataStore.reload({ query: self.query, interaction });
       }
     }),
 
@@ -388,6 +400,28 @@ export const Tab = types
           const snapshot = self.serialize();
 
           self.key = self.parent.snapshotToUrl(snapshot);
+
+          const projectId = self.root.SDK.projectId;
+
+          // Save the virtual tab of the project to local storage to persist between page navigations
+          if (projectId) {
+            localStorage.setItem(`virtual-tab-${projectId}`, JSON.stringify(snapshot));
+          }
+
+          History.navigate({ tab: self.key }, true);
+          self.reload({ interaction });
+        } else if (isFF(FF_LOPS_12) && self.root.SDK.type === 'labelops') {
+          const snapshot = self.serialize();
+
+          self.key = self.parent.snapshotToUrl(snapshot);
+
+          const projectId = self.root.SDK.projectId;
+
+          // Save the virtual tab of the project to local storage to persist between page navigations
+          if (projectId) {
+            localStorage.setItem(`virtual-tab-${projectId}`, JSON.stringify(snapshot));
+          }
+
           History.navigate({ tab: self.key }, true);
           self.reload({ interaction });
         } else {

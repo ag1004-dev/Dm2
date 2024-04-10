@@ -3,11 +3,24 @@ import { DataStore, DataStoreItem } from "../../mixins/DataStore";
 import { getAnnotationSnapshot } from "../../sdk/lsf-utils";
 import { isDefined } from "../../utils/utils";
 import { Assignee } from "../Assignee";
-import { DynamicModel } from "../DynamicModel";
+import { DynamicModel, registerModel } from "../DynamicModel";
 import { CustomJSON } from "../types";
+import { FF_DEV_2536, FF_LOPS_E_3, isFF } from "../../utils/feature-flags";
+
+const fileAttributes = types.model({
+  "certainty": types.optional(types.maybeNull(types.number), 0),
+  "distance": types.optional(types.maybeNull(types.number), 0),
+  "id": types.optional(types.maybeNull(types.string), ""),
+});
+
+const exportedModel = types.model({
+  "project_id": types.optional(types.maybeNull(types.number), null),
+  "created_at": types.optional(types.maybeNull(types.string), ""),
+});
 
 export const create = (columns) => {
   const TaskModelBase = DynamicModel("TaskModelBase", columns, {
+    ...(isFF(FF_DEV_2536) ? { comment_authors: types.optional(types.array(Assignee), []) } : {}),
     annotators: types.optional(types.array(Assignee), []),
     reviewers: types.optional(types.array(Assignee), []),
     annotations: types.optional(types.array(CustomJSON), []),
@@ -19,7 +32,14 @@ export const create = (columns) => {
     queue: types.optional(types.maybeNull(types.string), null),
     // annotation to select on rejected queue
     default_selected_annotation: types.maybeNull(types.number),
+    allow_postpone: types.maybeNull(types.boolean),
+    unique_lock_id: types.maybeNull(types.string),
     updated_by: types.optional(types.array(Assignee), []),
+    ...(isFF(FF_LOPS_E_3) ? { 
+      _additional: types.optional(fileAttributes, {}),
+      candidate_task_id: types.optional(types.string, ""),
+      project: types.union(types.number, types.optional(types.array(exportedModel), [])), //number for Projects, array of exportedModel for Datasets
+    } : {}),
   })
     .views((self) => ({
       get lastAnnotation() {
@@ -87,16 +107,36 @@ export const create = (columns) => {
     }));
 
   const TaskModel = types.compose("TaskModel", TaskModelBase, DataStoreItem);
+  const AssociatedType = types.model("AssociatedModelBase", {
+    id: types.identifierNumber,
+    title: types.string,
+    workspace: types.optional(types.array(types.string), []),
+  });
+
+  registerModel("TaskModel", TaskModel);
 
   return DataStore("TasksStore", {
     apiMethod: "tasks",
     listItemType: TaskModel,
+    associatedItemType: AssociatedType,
     properties: {
       totalAnnotations: 0,
       totalPredictions: 0,
     },
   })
     .actions((self) => ({
+      loadTaskHistory: flow(function* (props) {
+        let taskHistory = yield self.root.apiCall("taskHistory", props);
+
+        taskHistory = taskHistory.map((task) => {
+          return {
+            taskId: task.taskId,
+            annotationId: task.annotationId?.toString(),
+          };
+        });
+
+        return taskHistory;
+      }),
       loadTask: flow(function* (taskID, { select = true } = {}) {
         if (!isDefined(taskID)) {
           console.warn("Task ID must be provided");

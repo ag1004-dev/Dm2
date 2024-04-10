@@ -4,20 +4,22 @@ import { useCallback, useMemo, useState } from "react";
 import { FaQuestionCircle } from "react-icons/fa";
 import { useShortcut } from "../../../sdk/hotkeys";
 import { Block, Elem } from "../../../utils/bem";
+import { FF_DEV_2536, FF_DEV_4008, FF_OPTIC_2, isFF } from '../../../utils/feature-flags';
+import * as CellViews from "../../CellViews";
 import { Icon } from "../../Common/Icon/Icon";
+import { DEFAULT_PAGE_SIZE, getStoredPageSize, Pagination, setStoredPageSize } from "../../Common/Pagination/Pagination";
 import { ImportButton } from "../../Common/SDKButtons";
 import { Spinner } from "../../Common/Spinner";
 import { Table } from "../../Common/Table/Table";
 import { Tag } from "../../Common/Tag/Tag";
 import { Tooltip } from "../../Common/Tooltip/Tooltip";
-import * as CellViews from "../../CellViews";
 import { GridView } from "../GridView/GridView";
-import { getStoredPageSize, Pagination, setStoredPageSize } from "../../Common/Pagination/Pagination";
 import "./DataView.styl";
+import { Button } from "../../Common/Button/Button";
 
 const injector = inject(({ store }) => {
   const { dataStore, currentView } = store;
-  const props = {
+  let props = {
     store,
     dataStore,
     updated: dataStore.updated,
@@ -32,7 +34,7 @@ const injector = inject(({ store }) => {
     total: dataStore?.total ?? 0,
     isLoading: dataStore?.loading ?? true,
     isLocked: currentView?.locked ?? false,
-    hasData: (store.project?.task_count ?? store.project?.task_number ?? 0) > 0,
+    hasData: (store.project?.task_count ?? store.project?.task_number ?? dataStore?.total ?? 0) > 0,
     focusedItem: dataStore?.selected ?? dataStore?.highlighted,
   };
 
@@ -56,7 +58,7 @@ export const DataView = injector(
     isLocked,
     ...props
   }) => {
-    const [currentPageSize, setPageSize] = useState(getStoredPageSize("tasks", 30));
+    const [currentPageSize, setPageSize] = useState(getStoredPageSize("tasks", DEFAULT_PAGE_SIZE));
 
     const setPage = useCallback((page, pageSize) => {
       setPageSize(pageSize);
@@ -107,24 +109,29 @@ export const DataView = injector(
     );
 
     const onSelectAll = useCallback(() => {
-      console.log('selected all');
       view.selectAll();
     }, [view]);
 
     const onRowSelect = useCallback((id) => {
-      console.log('selected row');
       view.toggleSelected(id);
     }, [view]);
 
     const onRowClick = useCallback(
-      (item, e) => {
-        if (e.metaKey || e.ctrlKey) {
-          window.open(`./?task=${item.task_id ?? item.id}`, "_blank");
+      async (item, e) => {
+        const itemID = item.task_id ?? item.id;
+
+        if (store.SDK.type === 'DE') {
+          store.SDK.invoke('recordPreview', item, columns, getRoot(view).taskStore.associatedList);
+        } else if (e.metaKey || e.ctrlKey) {
+          window.open(`./?task=${itemID}`, "_blank");
         } else {
+          console.log(item);
+          if (isFF(FF_OPTIC_2)) await self.LSF?.saveDraft();
+
           getRoot(view).startLabeling(item);
         }
       },
-      [view],
+      [view, columns],
     );
 
     const renderContent = (content) => {
@@ -132,6 +139,17 @@ export const DataView = injector(
         return (
           <Block name="fill-container">
             <Spinner size="large" />
+          </Block>
+        );
+      } else if (store.SDK.type === 'DE' && store.project?.status?.id !== 'completed') {
+        return (
+          <Block name="syncInProgress">
+            <Elem name='title' tag="h3">Hang tight! Items are syncing in the background</Elem>
+            <Elem name='text'>Press the button below to see any synced items</Elem>
+            <Button onClick={async () => {
+              await store.fetchProject({ force: true, interaction: 'refresh' });
+              await store.currentView?.reload();
+            }}>Refresh</Button>
           </Block>
         );
       } else if (total === 0 || !hasData) {
@@ -196,6 +214,8 @@ export const DataView = injector(
         commonDecoration("reviews_accepted", 60, "center"),
         commonDecoration("reviews_rejected", 60, "center"),
         commonDecoration("ground_truth", 60, "center"),
+        isFF(FF_DEV_2536) && commonDecoration("comment_count", 60, "center"),
+        isFF(FF_DEV_2536) && commonDecoration("unresolved_comment_count", 60, "center"),
         {
           resolver: (col) => col.type === "Number",
           style(col) {
@@ -261,13 +281,18 @@ export const DataView = injector(
 
     useShortcut("dm.focus-previous", () => {
       if (document.activeElement !== document.body) return;
-      dataStore.focusPrev();
+
+      const task = dataStore.focusPrev();
+
+      if (isFF(FF_DEV_4008)) getRoot(view).startLabeling(task);
     });
 
     useShortcut("dm.focus-next", () => {
       if (document.activeElement !== document.body) return;
 
-      dataStore.focusNext();
+      const task = dataStore.focusNext();
+
+      if (isFF(FF_DEV_4008)) getRoot(view).startLabeling(task);
     });
 
     useShortcut("dm.close-labeling", () => {
@@ -306,7 +331,7 @@ export const DataView = injector(
               showPageSize={!isLabeling}
               size={isLabeling ? "small" : "medium"}
               waiting={dataStore.loading}
-              deafultPageSize={currentPageSize}
+              defaultPageSize={currentPageSize}
               pageSizeOptions={[10, 30, 50, 100]}
               onInit={setPage}
               onChange={setPage}

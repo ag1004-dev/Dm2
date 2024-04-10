@@ -15,6 +15,7 @@ export const Resizer = ({
   handleStyle,
   initialWidth,
   className,
+  type,
   minWidth,
   maxWidth,
   showResizerLine,
@@ -26,9 +27,17 @@ export const Resizer = ({
   const [isResizing, setIsResizing] = React.useState(false);
   const resizeHandler = React.useRef();
 
+  React.useEffect(() => {
+    const newWidth = Math.max(minWidth, Math.min(width));
+
+    setWidth(newWidth);
+    onResizeCallback?.(newWidth);
+  }, []);
+
   /** @param {MouseEvent} evt */
   const handleResize = React.useCallback(
     (evt) => {
+      evt.stopPropagation();
       const initialX = evt.pageX;
       let newWidth = width;
 
@@ -85,7 +94,7 @@ export const Resizer = ({
         name="handle"
         ref={resizeHandler}
         style={handleStyle}
-        mod={{ resizing: showResizerLine !== false && isResizing }}
+        mod={{ resizing: showResizerLine !== false && isResizing, quickview: type === 'quickview' }}
         onMouseDown={handleResize}
         onDoubleClick={() => onReset?.()}
       />

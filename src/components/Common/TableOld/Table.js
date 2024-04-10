@@ -9,6 +9,7 @@ import React, {
   useState
 } from "react";
 import { FaCode } from "react-icons/fa";
+import { RiCodeLine } from "react-icons/ri";
 import AutoSizer from "react-virtualized-auto-sizer";
 import { VariableSizeList } from "react-window";
 import InfiniteLoader from "react-window-infinite-loader";
@@ -26,7 +27,8 @@ import { TableRow } from "./TableRow/TableRow";
 import { prepareColumns } from "./utils";
 import { Block } from "../../../utils/bem";
 import { FieldsButton } from "../FieldsButton";
-import { LsGear } from "../../../assets/icons";
+import { LsGear, LsGearNewUI } from "../../../assets/icons";
+import { FF_DEV_3873, FF_LOPS_E_10, FF_LOPS_E_3, isFF } from "../../../utils/feature-flags";
 
 const Decorator = (decoration) => {
   return {
@@ -60,16 +62,22 @@ export const Table = observer(
     headerExtra,
     ...props
   }) => {
+    const colOrderKey = 'dm:columnorder';
     const tableHead = useRef();
+    const [colOrder, setColOrder] = useState(JSON.parse(localStorage.getItem(colOrderKey)) ?? {});
     const listRef = useRef();
     const columns = prepareColumns(props.columns, props.hiddenColumns);
     const Decoration = useMemo(() => Decorator(decoration), [decoration]);
-    const { api } = useSDK();
+    const { api, type } = useSDK();
+
+    useEffect(() => {
+      localStorage.setItem(colOrderKey, JSON.stringify(colOrder));
+    }, [colOrder]);
 
     if (props.onSelectAll && props.onSelectRow) {
       columns.unshift({
         id: "select",
-        headerClassName: "select-all",
+        headerClassName: "table__select-all",
         cellClassName: "select-row",
         style: {
           width: 40,
@@ -121,6 +129,9 @@ export const Table = observer(
         };
 
         const onTaskLoad = async () => {
+          if (isFF(FF_LOPS_E_3) && type === "DE") {
+            return new Promise(resolve => resolve(out));
+          }
           const response = await api.task({ taskID: out.id });
 
           return response ?? {};
@@ -135,15 +146,21 @@ export const Table = observer(
                 modal({
                   title: "Source for task " + out?.id,
                   style: { width: 800 },
-                  body: <TaskSourceView content={out} onTaskLoad={onTaskLoad} />,
+                  body: <TaskSourceView content={out} onTaskLoad={onTaskLoad} sdkType={type} />,
                 });
               }}
-              icon={<Icon icon={FaCode}/>}
+              icon={isFF(FF_LOPS_E_10) ? <Icon icon={RiCodeLine} style={{ width: 24, height: 24 }}/> : <Icon icon={FaCode}/>}
             />
           </Tooltip>
         );
       },
     });
+
+    if (Object.keys(colOrder).length > 0) {
+      columns.sort( (a, b) => {
+        return colOrder[a.id] < colOrder[b.id] ? -1 : 1;
+      });
+    }
 
     const contextValue = {
       columns,
@@ -168,6 +185,7 @@ export const Table = observer(
           onResize={onColumnResize}
           onReset={onColumnReset}
           extra={headerExtra}
+          onDragEnd={(updatedColOrder) => setColOrder(updatedColOrder)}
         />
       ),
       [
@@ -275,18 +293,28 @@ export const Table = observer(
               right,
             }}
           >
-            <FieldsButton
-              wrapper={FieldsButton.Checkbox}
-              icon={<LsGear />}
-              style={{
-                padding: 0,
-                zIndex: 1000,
-                borderRadius: 0,
-                height: "45px",
-                width: "45px",
-                margin: "-1px",
-              }}
-            />
+            {isFF(FF_DEV_3873) ? (
+              <FieldsButton
+                className={'columns__selector__button-new'}
+                wrapper={FieldsButton.Checkbox}
+                icon={<LsGearNewUI />}
+                style={{ padding: '0' }}
+                tooltip={'Customize Columns'}
+              />
+            ):(
+              <FieldsButton
+                wrapper={FieldsButton.Checkbox}
+                icon={<LsGear />}
+                style={{
+                  padding: 0,
+                  zIndex: 1000,
+                  borderRadius: 0,
+                  height: "45px",
+                  width: "45px",
+                  margin: "-1px",
+                }}
+              />
+            )}
           </Block>
         )}
         <TableBlock
@@ -422,7 +450,7 @@ const innerElementType = forwardRef(({ children, ...rest }, ref) => {
   );
 });
 
-const TaskSourceView = ({ content, onTaskLoad }) => {
+const TaskSourceView = ({ content, onTaskLoad, sdkType }) => {
   const [source, setSource] = useState(content);
 
   useEffect(() => {
@@ -430,10 +458,12 @@ const TaskSourceView = ({ content, onTaskLoad }) => {
       const formatted = {
         id: response.id,
         data: response.data,
-        annotations: response.annotations ?? [],
-        predictions: response.predictions ?? [],
       };
 
+      if (sdkType !== "DE") {
+        formatted.annotations =  response.annotations ?? [];
+        formatted.predictions =  response.predictions ?? [];
+      }
       setSource(formatted);
     });
   }, []);
