@@ -157,6 +157,10 @@ export class LSFWrapper {
 
     console.log([...interfaces]);
     console.groupEnd();
+    const queueTotal = dm.store.project.reviewer_queue_total || dm.store.project.queue_total;
+    const queueDone = dm.store.project.queue_done;
+    const queueLeft = dm.store.project.queue_left;
+    const queuePosition = queueDone ? queueDone + 1 : queueLeft ? queueTotal - queueLeft + 1 : 1;
 
     const lsfProperties = {
       // ensure that we are able to distinguish at component level if the app has fully hydrated.
@@ -171,6 +175,8 @@ export class LSFWrapper {
       forceAutoAnnotation: this.isInteractivePreannotations,
       forceAutoAcceptSuggestions: this.isInteractivePreannotations,
       messages: options.messages,
+      queueTotal,
+      queuePosition,
 
       /* EVENTS */
       onSubmitDraft: this.onSubmitDraft,
@@ -640,13 +646,35 @@ export class LSFWrapper {
     }
   };
 
+  waitForDraftSavingToComplete = async (selected, timeInitialed) => {
+    return new Promise((resolve, reject) => {
+      const checkDraftSaving = async (i) => {
+        if (i > 50) return reject(false);
+        if (new Date(selected.draftSaved) > timeInitialed) {
+          resolve(true);
+        } else {
+          setTimeout(() => checkDraftSaving(i++), 100);
+        }
+      };
+
+      checkDraftSaving();
+    });
+  };
+
   saveDraft = async (target = null) => {
     const selected = target || this.lsf?.annotationStore?.selected;
     const hasChanges = !!selected?.history.undoIdx && !selected?.submissionStarted;
+    let status = undefined;
 
-    if (!hasChanges || !selected) return;
-    const res = await selected?.saveDraftImmediatelyWithResults();
-    const status = res?.$meta?.status;
+    if (selected?.isDraftSaving) {
+      const res = await this.waitForDraftSavingToComplete(selected, Date.now());
+
+      status = res ? 200 : 500;
+    } else if (hasChanges && selected) {
+      const res = await selected?.saveDraftImmediatelyWithResults();
+
+      status = res?.$meta?.status;
+    }
 
     if (status === 200 || status === 201) return this.datamanager.invoke("toast", { message: "Draft saved successfully", type: "info" });
     else if (status !== undefined) return this.datamanager.invoke("toast", { message: "There was an error saving your draft", type: "error" });

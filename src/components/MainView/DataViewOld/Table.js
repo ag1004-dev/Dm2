@@ -4,7 +4,7 @@ import { useCallback, useMemo } from "react";
 import { FaQuestionCircle } from "react-icons/fa";
 import { useShortcut } from "../../../sdk/hotkeys";
 import { Block, Elem } from "../../../utils/bem";
-import { FF_DEV_2536, FF_DEV_4008, isFF } from '../../../utils/feature-flags';
+import { FF_DEV_2536, FF_DEV_4008, FF_OPTIC_2, isFF } from '../../../utils/feature-flags';
 import * as CellViews from "../../CellViews";
 import { Icon } from "../../Common/Icon/Icon";
 import { ImportButton } from "../../Common/SDKButtons";
@@ -61,10 +61,11 @@ export const DataView = injector(
       return props.focusedItem;
     }, [props.focusedItem]);
 
-    const loadMore = useCallback(() => {
-      if (!dataStore.hasNextPage || dataStore.loading) return;
+    const loadMore = useCallback(async () => {
+      if (!dataStore.hasNextPage || dataStore.loading) return Promise.resolve();
 
-      dataStore.fetch({ interaction: "scroll" });
+      await dataStore.fetch({ interaction: "scroll" });
+      return Promise.resolve();
     }, [dataStore]);
 
     const isItemLoaded = useCallback(
@@ -121,7 +122,9 @@ export const DataView = injector(
         } else if (e.metaKey || e.ctrlKey) {
           window.open(`./?task=${itemID}`, "_blank");
         } else {
-          await store._sdk.lsf?.saveDraft();
+          if (isFF(FF_OPTIC_2)) {
+            await store._sdk.lsf?.saveDraft();
+          }
           getRoot(view).startLabeling(item);
         }
       },
