@@ -28,6 +28,7 @@ import { Modal } from "../components/Common/Modal/Modal";
 import { CommentsSdk } from "./comments-sdk";
 // import { LSFHistory } from "./lsf-history";
 import { annotationToServer, taskToLSFormat } from "./lsf-utils";
+import { when } from 'mobx';
 
 const DEFAULT_INTERFACES = [
   "basic",
@@ -97,7 +98,6 @@ export class LSFWrapper {
     this.initialAnnotation = options.annotation;
     this.interfacesModifier = options.interfacesModifier;
     this.isInteractivePreannotations = options.isInteractivePreannotations ?? false;
-    // this.history = this.labelStream ? new LSFHistory(this) : null;
 
     let interfaces = [...DEFAULT_INTERFACES];
 
@@ -182,6 +182,7 @@ export class LSFWrapper {
       onSubmitDraft: this.onSubmitDraft,
       onLabelStudioLoad: this.onLabelStudioLoad,
       onTaskLoad: this.onTaskLoad,
+      onPresignUrlForProject: this.onPresignUrlForProject,
       onStorageInitialized: this.onStorageInitialized,
       onSubmitAnnotation: this.onSubmitAnnotation,
       onUpdateAnnotation: this.onUpdateAnnotation,
@@ -206,6 +207,8 @@ export class LSFWrapper {
       const LSF = await resolveLabelStudio();
 
       this.lsfInstance = new LSF(this.root, settings);
+
+      this.lsfInstance.on('presignUrlForProject', this.onPresignUrlForProject);
 
       const names = Array.from(this.datamanager.callbacks.keys())
         .filter(k => k.startsWith('lsf:'));
@@ -329,6 +332,8 @@ export class LSFWrapper {
   }
 
   setLSFTask(task, annotationID, fromHistory) {
+    if (!this.lsf) return;
+    
     const hasChangedTasks = this.lsf?.task?.id !== task?.id && task?.id;
 
     this.setLoading(true, hasChangedTasks);
@@ -540,6 +545,24 @@ export class LSFWrapper {
     this.datamanager.invoke("onSelectAnnotation", ...args);
   };
 
+  /**
+   * Proxy urls to presign them if storage is connected
+   * @param {*} _ LS instance
+   * @param {string} url http/https are not proxied and returned as is
+   */
+  onPresignUrlForProject = (_, url) => {
+    const parsedUrl = new URL(url);
+
+    // return same url if http(s)
+    if (["http:", "https:"].includes(parsedUrl.protocol)) return url;
+
+    const api = this.datamanager.api;
+    const projectId = this.project.id;
+    const fileuri = btoa(url);
+
+    return api.createUrl(api.endpoints.presignUrlForProject, { projectId, fileuri }).url;
+  };
+
   onStorageInitialized = async (ls) => {
     this.datamanager.invoke("onStorageInitialized", ls);
 
@@ -555,8 +578,7 @@ export class LSFWrapper {
   onSubmitAnnotation = async () => {
     const exitStream = this.shouldExitStream();
     const loadNext = exitStream ? false : this.shouldLoadNext();
-    
-    await this.submitCurrentAnnotation("submitAnnotation", async (taskID, body) => {
+    const result = await this.submitCurrentAnnotation("submitAnnotation", async (taskID, body) => {
       return await this.datamanager.apiCall(
         "submitAnnotation",
         { taskID },
@@ -565,6 +587,10 @@ export class LSFWrapper {
         { errorHandler: result => result.status === 409 },
       );
     }, false, loadNext, exitStream);
+    const status = result?.$meta?.status;
+
+    if (status === 200 || status === 201) this.datamanager.invoke("toast", { message: "Annotation saved successfully", type: "info" });
+    else if (status !== undefined) this.datamanager.invoke("toast", { message: "There was an error saving your Annotation", type: "error" });
   };
 
   /** @private */
@@ -589,6 +615,10 @@ export class LSFWrapper {
         },
       );
     });
+    const status = result?.$meta?.status;
+
+    if (status === 200 || status === 201) this.datamanager.invoke("toast", { message: "Annotation updated successfully", type: "info" });
+    else if (status !== undefined) this.datamanager.invoke("toast", { message: "There was an error updating your Annotation", type: "error" });
 
     this.datamanager.invoke("updateAnnotation", ls, annotation, result);
 
@@ -646,44 +676,15 @@ export class LSFWrapper {
     }
   };
 
-  waitForDraftSavingToComplete = async (selected, timeInitialed) => {
-    return new Promise((resolve, reject) => {
-      const checkDraftSaving = async (i) => {
-        if (i > 50) return reject(false);
-        if (new Date(selected.draftSaved) > timeInitialed) {
-          resolve(true);
-        } else {
-          setTimeout(() => checkDraftSaving(i++), 100);
-        }
-      };
-
-      checkDraftSaving();
-    });
-  };
-
-  saveDraft = async (target = null) => {
-    const selected = target || this.lsf?.annotationStore?.selected;
-    const hasChanges = !!selected?.history.undoIdx && !selected?.submissionStarted;
-    let status = undefined;
-
-    if (selected?.isDraftSaving) {
-      const res = await this.waitForDraftSavingToComplete(selected, Date.now());
-
-      status = res ? 200 : 500;
-    } else if (hasChanges && selected) {
-      const res = await selected?.saveDraftImmediatelyWithResults();
-
-      status = res?.$meta?.status;
-    }
-
-    if (status === 200 || status === 201) return this.datamanager.invoke("toast", { message: "Draft saved successfully", type: "info" });
-    else if (status !== undefined) return this.datamanager.invoke("toast", { message: "There was an error saving your draft", type: "error" });
-  };
-  
   onSubmitDraft = async (studio, annotation, params = {}) => {
     const annotationDoesntExist = !annotation.pk;
     const data = { body: this.prepareData(annotation, { draft: true }) }; // serializedAnnotation
+    const hasChanges = this.needsDraftSave(annotation);
+    const showToast = params?.useToast && hasChanges;
+    // console.log('onSubmitDraft', params?.useToast, hasChanges);
 
+    if (params?.useToast) delete params.useToast;
+    
     Object.assign(data.body, params);
 
     await this.saveUserLabels();
@@ -691,7 +692,8 @@ export class LSFWrapper {
     if (annotation.draftId > 0) {
       // draft has been already created
       const res = await this.datamanager.apiCall("updateDraft", { draftID: annotation.draftId }, data);
-
+      
+      showToast && this.draftToast(res?.$meta?.status);
       return res;
 
     } else {
@@ -707,6 +709,8 @@ export class LSFWrapper {
         );
       }
       response?.id && annotation.setDraftId(response?.id);
+      showToast && this.draftToast(response?.$meta?.status);
+
       return response;
     }
   };
@@ -865,13 +869,14 @@ export class LSFWrapper {
     } else {
       await this.loadTask();
     }
+    return result;
   }
 
   /** @private */
   prepareData(annotation, { includeId, draft } = {}) {
     const userGenerate =
       !annotation.userGenerate || annotation.sentUserGenerate;
-    
+
     const sessionTime = (new Date() - annotation.loadedDate) / 1000;
     const submittedTime = Number(annotation.leadTime ?? 0);
     const draftTime = Number(this.task.drafts[0]?.lead_time ?? 0);
