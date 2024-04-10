@@ -1,6 +1,4 @@
 
-function getFeatureFlags() {
-  return window.APP_SETTINGS?.feature_flags || {};
 }
 
 export function isFF(id) {
@@ -12,4 +10,4 @@ export function isFF(id) {
   else {
     return window.APP_SETTINGS?.feature_flags_default_value === true;
   }
-}
+

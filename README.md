@@ -1,6 +1,7 @@
+# CI test
 ## Data Manager 2.0 &middot; ![Build and Test](https://github.com/heartexlabs/dm2/workflows/Build%20and%20Test/badge.svg) &middot; [![npm version](https://badge.fury.io/js/%40heartexlabs%2Fdatamanager.svg)](https://badge.fury.io/js/%40heartexlabs%2Fdatamanager)
 
-[Website](https://labelstud.io/) • [Docs](https://labelstud.io/guide) • [Twitter](https://twitter.com/heartexlabs) • [Join Slack Community](https://slack.labelstudio.heartex.com)
+[Website](https://labelstud.io/) • [Docs](https://labelstud.io/guide) • [Twitter](https://twitter.com/heartexlabs) • [Join Slack Community](https://slack.labelstud.io)
 
 Data exploration tool for [Label Studio][ls].
 
@@ -21,7 +22,7 @@ Data exploration tool for [Label Studio][ls].
 ### Quickstart
 
 ```
-npm install @heartexlabs/datamanager
+npm install @heartexlabs/datamanager 
 ```
 
 ### Features
@@ -264,7 +265,7 @@ Now you can start Label Studio if it's not running, or refresh the page in the b
 
 ## License
 
-This software is licensed under the [Apache 2.0 LICENSE](/LICENSE) © [Heartex](https://www.heartex.ai/). 2020
+This software is licensed under the [Apache 2.0 LICENSE](/LICENSE) © [Heartex](https://www.heartex.com/). 2020
 
 <img src="https://github.com/heartexlabs/label-studio/blob/master/images/opossum_looking.png?raw=true" title="Hey everyone!" height="140" width="140" />
 

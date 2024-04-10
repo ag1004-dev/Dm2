@@ -2,54 +2,26 @@ import { flow, getRoot, getSnapshot, types } from "mobx-state-tree";
 import { DataStore, DataStoreItem } from "../../mixins/DataStore";
 import { getAnnotationSnapshot } from "../../sdk/lsf-utils";
 import { isDefined } from "../../utils/utils";
-import { DynamicModel } from "../DynamicModel";
+import { Assignee } from "../Assignee";
+import { DynamicModel, registerModel } from "../DynamicModel";
 import { CustomJSON } from "../types";
-import { User } from "../Users";
+import { FF_DEV_2536, FF_LOPS_E_3, isFF } from "../../utils/feature-flags";
 
-const Assignee = types
-  .model("Assignee", {
-    id: types.identifierNumber,
-    user: types.late(() => types.reference(User)),
-    review: types.maybeNull(types.enumeration(["accepted", "rejected", "fixed"])),
-    reviewed: types.maybeNull(types.boolean),
-    annotated: types.maybeNull(types.boolean),
-  })
-  .views((self) => ({
-    get firstName() { return self.user.firstName; },
-    get lastName() { return self.user.lastName; },
-    get username() { return self.user.username; },
-    get email() { return self.user.email; },
-    get lastActivity() { return self.user.lastActivity; },
-    get avatar() { return self.user.avatar; },
-    get initials() { return self.user.initials; },
-    get fullName() { return self.user.fullName; },
-  }))
-  .preProcessSnapshot((sn) => {
-    let result = sn;
+const SIMILARITY_UPPER_LIMIT_PRECISION = 1000;
+const fileAttributes = types.model({
+  "certainty": types.optional(types.maybeNull(types.number), 0),
+  "distance": types.optional(types.maybeNull(types.number), 0),
+  "id": types.optional(types.maybeNull(types.string), ""),
+});
 
-    if (typeof sn === 'number') {
-      result = {
-        id: sn,
-        user: sn,
-        annotated: true,
-        review: null,
-        reviewed: false,
-      };
-    } else {
-      const { user_id, user, ...rest } = sn;
-
-      result = {
-        ...rest,
-        id: user_id ?? user,
-        user: user_id ?? user,
-      };
-    }
-
-    return result;
-  });
+const exportedModel = types.model({
+  "project_id": types.optional(types.maybeNull(types.number), null),
+  "created_at": types.optional(types.maybeNull(types.string), ""),
+});
 
 export const create = (columns) => {
   const TaskModelBase = DynamicModel("TaskModelBase", columns, {
+    ...(isFF(FF_DEV_2536) ? { comment_authors: types.optional(types.array(Assignee), []) } : {}),
     annotators: types.optional(types.array(Assignee), []),
     reviewers: types.optional(types.array(Assignee), []),
     annotations: types.optional(types.array(CustomJSON), []),
@@ -59,6 +31,16 @@ export const create = (columns) => {
     was_cancelled: false,
     assigned_task: false,
     queue: types.optional(types.maybeNull(types.string), null),
+    // annotation to select on rejected queue
+    default_selected_annotation: types.maybeNull(types.number),
+    allow_postpone: types.maybeNull(types.boolean),
+    unique_lock_id: types.maybeNull(types.string),
+    updated_by: types.optional(types.array(Assignee), []),
+    ...(isFF(FF_LOPS_E_3) ? { 
+      _additional: types.optional(fileAttributes, {}),
+      candidate_task_id: types.optional(types.string, ""),
+      project: types.union(types.number, types.optional(types.array(exportedModel), [])), //number for Projects, array of exportedModel for Datasets
+    } : {}),
   })
     .views((self) => ({
       get lastAnnotation() {
@@ -126,16 +108,36 @@ export const create = (columns) => {
     }));
 
   const TaskModel = types.compose("TaskModel", TaskModelBase, DataStoreItem);
+  const AssociatedType = types.model("AssociatedModelBase", {
+    id: types.identifierNumber,
+    title: types.string,
+    workspace: types.optional(types.array(types.string), []),
+  });
+
+  registerModel("TaskModel", TaskModel);
 
   return DataStore("TasksStore", {
     apiMethod: "tasks",
     listItemType: TaskModel,
+    associatedItemType: AssociatedType,
     properties: {
       totalAnnotations: 0,
       totalPredictions: 0,
     },
   })
     .actions((self) => ({
+      loadTaskHistory: flow(function* (props) {
+        let taskHistory = yield self.root.apiCall("taskHistory", props);
+
+        taskHistory = taskHistory.map((task) => {
+          return {
+            taskId: task.taskId,
+            annotationId: task.annotationId?.toString(),
+          };
+        });
+
+        return taskHistory;
+      }),
       loadTask: flow(function* (taskID, { select = true } = {}) {
         if (!isDefined(taskID)) {
           console.warn("Task ID must be provided");
@@ -188,7 +190,7 @@ export const create = (columns) => {
           const id = taskID ?? taskData.id;
           const snapshot = self.mergeSnapshot(id, taskData);
 
-          task = self.updateItem(taskID ?? taskData.id, {
+          task = self.updateItem(id, {
             ...snapshot,
             source: JSON.stringify(taskData),
           });
@@ -217,17 +219,19 @@ export const create = (columns) => {
       },
 
       postProcessData(data) {
-        const { total_annotations, total_predictions } = data;
+        const { total_annotations, total_predictions, similarity_score_upper_limit } = data;
 
         if (total_annotations !== null)
           self.totalAnnotations = total_annotations;
         if (total_predictions !== null)
           self.totalPredictions = total_predictions;
+        if (!isNaN(similarity_score_upper_limit))
+          self.similarityUpperLimit = (Math.ceil(similarity_score_upper_limit * SIMILARITY_UPPER_LIMIT_PRECISION) / SIMILARITY_UPPER_LIMIT_PRECISION);
       },
 
     }))
     .preProcessSnapshot((snapshot) => {
-      const { total_annotations, total_predictions, ...sn } = snapshot;
+      const { total_annotations, total_predictions, similarity_score_upper_limit, ...sn } = snapshot;
 
       return {
         ...sn,
@@ -238,6 +242,7 @@ export const create = (columns) => {
         })),
         totalAnnotations: total_annotations,
         totalPredictions: total_predictions,
+        similarityUpperLimit: similarity_score_upper_limit,
       };
     });
 };
