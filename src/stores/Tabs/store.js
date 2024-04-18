@@ -32,6 +32,8 @@ const restoreValue = (name) => {
 const dataCleanup = (tab, columnIds) => {
   const { data } = tab;
 
+  if (!data) return { ...tab };
+
   if (data.filters) {
     data.filters.items = data.filters.items.filter(({ filter }) => {
       return columnIds.includes(filter.replace(/^filter:/, ''));
@@ -267,7 +269,7 @@ export const TabStore = types
       // so we need to take in from the list once again
       defaultView = self.views[self.views.length - 1];
       self.selected = defaultView;
-      defaultView.reload();
+      getRoot(self).SDK.hasInterface('tabs') && defaultView.reload();
     }),
 
     snapshotFromUrl(viewQueryParam) {
@@ -300,7 +302,11 @@ export const TabStore = types
       const apiMethod =
         !view.saved && root.apiVersion === 2 ? "createTab" : "updateTab";
 
-      const result = yield root.apiCall(apiMethod, params, body);
+      const result = yield root.apiCall(apiMethod, params, body, { allowToCancel: root.SDK.type === 'DE' });
+
+      if (result.isCanceled) {
+        return view;
+      }
       const viewSnapshot = getSnapshot(view);
       const newViewSnapshot = {
         ...viewSnapshot,
@@ -314,7 +320,7 @@ export const TabStore = types
         self.views.push({ ...newViewSnapshot, saved: true });
         const newView = self.views[self.views.length - 1];
 
-        newView.reload();
+        root.SDK.hasInterface('tabs') && newView.reload();
         self.setSelected(newView);
         destroy(view);
 
@@ -386,7 +392,12 @@ export const TabStore = types
 
         const parentPath = result.join(".");
 
-        result.push(column.id);
+        if (isDefined(column?.id)) {
+          result.push(column.id);
+        } else {
+          console.warn("Column or id is not defined", column);
+          console.warn("Columns", columns);
+        }
 
         const columnPath = result.join(".");
 
@@ -427,7 +438,7 @@ export const TabStore = types
 
         addedColumns.add(column.id);
 
-        if (!col.children && column.filterable) {
+        if (!col.children && column.filterable && (col?.visibility_defaults?.filter ?? true)) {
           self.availableFilters.push({
             id: `filter:${columnID}`,
             type: col.type,
@@ -488,7 +499,7 @@ export const TabStore = types
     fetchSingleTab: flow(function * (tabKey, selectedItems) {
       let tab, tabId = parseInt(tabKey);
 
-      if (!Number.isNaN(tabId)) {
+      if (!isNaN(tabKey) && !isNaN(tabId)) {
         const tabData = yield getRoot(self).apiCall("tab", { tabId });
         const columnIds = (self.columns ?? []).map(c => c.id);
         const { data, ...tabClean } = dataCleanup(tabData, columnIds);

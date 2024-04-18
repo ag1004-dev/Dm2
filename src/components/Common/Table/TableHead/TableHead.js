@@ -1,6 +1,6 @@
 import { observer, useLocalStore } from "mobx-react";
 import { toJS } from "mobx";
-import React, { forwardRef, useCallback, useRef } from "react";
+import React, { forwardRef, useCallback, useEffect, useRef } from "react";
 import {
   ViewColumnType,
   ViewColumnTypeName,
@@ -17,7 +17,8 @@ import { TableCell, TableCellContent } from "../TableCell/TableCell";
 import { TableContext, TableElem } from "../TableContext";
 import { getStyle } from "../utils";
 import "./TableHead.styl";
-import { FF_DEV_2984, isFF } from "../../../../utils/feature-flags";
+import { FF_DEV_2984, FF_DEV_3873, FF_LOPS_E_10, isFF } from "../../../../utils/feature-flags";
+import { getRoot } from "mobx-state-tree";
 
 const { Block, Elem } = BemWithSpecifiContext();
 
@@ -35,6 +36,23 @@ const DropdownWrapper = observer(
 
         return cellView && (selectable && displayType);
       });
+
+    const styles = {
+      flex: 1,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      background: "none",
+      fontSize: 14,
+    };
+    
+    if ( isFF( FF_LOPS_E_10 ) ) {
+      styles.border = "0 none";
+      styles.fontWeight =  500;
+      styles.fontSize =  16;
+      styles.lineHeight =  24;
+      styles.letterSpacing =  0.15;
+    }
 
     return (
       <Dropdown.Trigger
@@ -70,14 +88,7 @@ const DropdownWrapper = observer(
         <Button
           type="text"
           size="small"
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            background: "none",
-            fontSize: 14,
-          }}
+          style={styles}
         >
           {children}
         </Button>
@@ -110,9 +121,11 @@ const ColumnRenderer = observer(
       );
     }
 
+    const root = getRoot(column.original);
+    const isDE = root.SDK.type === "DE";
     const canOrder = sortingEnabled && column.original?.canOrder;
     const Decoration = decoration?.get?.(column);
-    const extra = columnHeaderExtra
+    const extra = !isDE && columnHeaderExtra
       ? columnHeaderExtra(column, Decoration)
       : null;
     const content = Decoration?.content
@@ -143,15 +156,12 @@ const ColumnRenderer = observer(
             justifyContent: style.justifyContent ?? "space-between",
             overflow: "hidden",
           }}
-          handleStyle={{
-            marginLeft: 9,
-          }}
           initialWidth={style.width ?? 150}
           minWidth={style.minWidth ?? 30}
           onResizeFinished={(width) => onResize?.(column, width)}
           onReset={() => onReset?.(column)}
         >
-          {column.parent ? (
+          {!isDE && column.parent ? (
             <DropdownWrapper
               column={column}
               cellViews={cellViews}
@@ -229,12 +239,22 @@ export const TableHead = observer(
           });
           return orderedColumns;
         }, [columns]);
+
+        useEffect(() => {
+          ref.current?.addEventListener("mousedown", (event) => {
+            if (event.target.className.includes("handle")) event.preventDefault();
+          });
+        }, [],
+        );
   
         return (
           <Block
             name="table-head"
             ref={ref}
-            style={style}
+            style={{
+              ...style,
+              height: isFF(FF_DEV_3873) && 42,
+            }}
             mod={{ droppable: true }}
             mix="horizontal-shadow"
             onDragOver={useCallback((e) => {
