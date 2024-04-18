@@ -719,15 +719,7 @@ export class LSFWrapper {
   onSubmitDraft = async (studio, annotation, params = {}) => {
     const annotationDoesntExist = !annotation.pk;
     const data = { body: this.prepareData(annotation, { draft: true }) }; // serializedAnnotation
-    const hasChanges = this.needsDraftSave(annotation);
-    const showToast = params?.useToast && hasChanges;
-    // console.log('onSubmitDraft', params?.useToast, hasChanges);
 
-    if (params?.useToast) delete params.useToast;
-    
-    Object.assign(data.body, params);
-
-    await this.saveUserLabels();
 
     if (annotation.draftId > 0) {
       // draft has been already created
@@ -869,12 +861,7 @@ export class LSFWrapper {
   }
   async submitCurrentAnnotation(eventName, submit, includeId = false, loadNext = true, exitStream) {
     const { taskID, currentAnnotation } = this;
-    const unique_id = this.task.unique_lock_id;
-    const serializedAnnotation = this.prepareData(currentAnnotation, { includeId });
 
-    if (unique_id) {
-      serializedAnnotation.unique_id = unique_id;
-    }
 
     this.setLoading(true);
 
@@ -923,8 +910,7 @@ export class LSFWrapper {
     const lead_time = sessionTime + submittedTime + draftTime;
 
     const result = {
-      lead_time,
-      result: (draft ? annotation.versions.draft : annotation.serializeAnnotation()) ?? [],
+
       draft_id: annotation.draftId,
       parent_prediction: annotation.parent_prediction,
       parent_annotation: annotation.parent_annotation,
