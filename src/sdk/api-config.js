@@ -62,6 +62,12 @@ export const APIConfig = {
     /** Single annotation */
     annotation: "/tasks/:taskID/annotations/:id",
 
+    /** Presign url */
+    presignUrlForTask: "/../../tasks/:taskID/presign",
+
+    /** Presign url outside of task context */
+    presignUrlForProject: "/../../projects/:projectId/presign",
+
     /** Submit annotation */
     submitAnnotation: {
       path: "/../tasks/:taskID/annotations",
@@ -142,7 +148,7 @@ export const APIConfig = {
     },
 
     /** List comments ?annotation=<annotation_id> **/
-    listComments: "/../comments", 
+    listComments: "/../comments",
 
     /** Create a new comment **/
     createComment: {
@@ -160,6 +166,14 @@ export const APIConfig = {
     deleteComment: {
       path: "/../comments/:id",
       method: "delete",
+    },
+
+    mlBackends: "/../ml",
+
+    // Test for LLM assistant
+    mlInteractive: {
+      path: "/../ml/:pk/interactive-annotating",
+      method: "post",
     },
   },
 };
