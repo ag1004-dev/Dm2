@@ -374,8 +374,7 @@ export class LSFWrapper {
     // const isManuallyAssigned = distribution === "assigned_only";
 
     // undefined or true for backward compatibility
-    this.lsf.toggleInterface("postpone", this.task.allow_postpone !== false);
-    this.lsf.toggleInterface("topbar:task-counter", !isFF(FF_DEV_3734));
+
     this.lsf.assignTask(task);
     this.lsf.initializeStore(lsfTask);
     this.setAnnotation(annotationID, fromHistory || isRejectedQueue);
