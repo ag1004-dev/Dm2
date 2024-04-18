@@ -16,6 +16,7 @@ import { TabColumn } from "./tab_column";
 import { TabFilterType } from "./tab_filter_type";
 import { TabHiddenColumns } from "./tab_hidden_columns";
 import { packJSON } from '../../utils/packJSON';
+import { isEmpty } from "../../utils/helpers";
 
 const storeValue = (name, value) => {
   window.localStorage.setItem(name, value);
@@ -30,6 +31,8 @@ const restoreValue = (name) => {
 
 const dataCleanup = (tab, columnIds) => {
   const { data } = tab;
+
+  if (!data) return { ...tab };
 
   if (data.filters) {
     data.filters.items = data.filters.items.filter(({ filter }) => {
@@ -128,7 +131,8 @@ export const TabStore = types
         selected = self.views.find((v) => v.id === view);
       }  else if (view && view.id) {
         selected = self.views.find((v) => v.id === view.id);
-      } else {
+      } 
+      if(!selected) {
         selected = self.views[0];
       }
 
@@ -176,14 +180,17 @@ export const TabStore = types
       destroy(view);
     }),
 
-    addView: flow(function* (viewSnapshot = {}, options) {
-      const {
-        autoselect = true,
-        autosave = true,
-        reload = true,
-      } = options ?? {};
-
-      const snapshot = viewSnapshot ?? {};
+    createSnapshot(viewSnapshot = {}) {
+      const isVirtual = !!viewSnapshot?.virtual;
+      const tabStorageKey = isVirtual && viewSnapshot.projectId ? `virtual-tab-${viewSnapshot.projectId}` : null;
+      const existingTabStorage = isVirtual && localStorage.getItem(tabStorageKey);
+      const existingTabStorageParsed = existingTabStorage ? JSON.parse(existingTabStorage) : null;
+      const urlTabIsVirtualCandidate = !!(viewSnapshot?.tab && isNaN(viewSnapshot.tab));
+      const existingTabUrlParsed = isVirtual && urlTabIsVirtualCandidate ? self.snapshotFromUrl(viewSnapshot.tab) : null;
+      const urlTabNotEmpty = !isEmpty(existingTabUrlParsed);
+      const existingTab = urlTabNotEmpty ? existingTabUrlParsed : existingTabStorageParsed;
+      const existingTabKey = urlTabNotEmpty ? viewSnapshot.tab : existingTabStorageParsed?.tab;
+      const snapshot = { ...viewSnapshot, key: existingTabKey, tab: existingTabKey, ...(existingTab ?? viewSnapshot ?? {}) };
       const lastView = self.views[self.views.length - 1];
       const newTitle = snapshot.title ?? `New Tab ${self.views.length + 1}`;
       const newID = snapshot.id ?? (lastView?.id ? lastView.id + 1 : 0);
@@ -193,16 +200,26 @@ export const TabStore = types
         labeling: [],
       };
 
-      const newSnapshot = {
-        ...viewSnapshot,
+      return {
+        ...snapshot,
         id: newID,
         title: newTitle,
         key: snapshot.key ?? guidGenerator(),
         hiddenColumns: snapshot.hiddenColumns ?? defaultHiddenColumns,
       };
+    },
+
+    addView: flow(function* (viewSnapshot = {}, options) {
+      const {
+        autoselect = true,
+        autosave = true,
+        reload = true,
+      } = options ?? {};
+
+      const newSnapshot = self.createSnapshot(viewSnapshot);
 
       self.views.push(newSnapshot);
-      let newView = self.views[self.views.length - 1];
+      const newView = self.views[self.views.length - 1];
 
       if (autosave) {
         // with autosave it will be reloaded anyway
@@ -212,20 +229,20 @@ export const TabStore = types
       if (autoselect) {
         const selectedView = self.views[self.views.length - 1];
 
-        console.log('selecting and reloading', selectedView.id);
         self.setSelected(selectedView);
       }
 
       return newView;
     }),
 
-    getViewByKey: flow(function*(key){
+    getViewByKey: flow(function*(key) {
       let view = self.views.find((v) => v.key === key);
 
       if (view) return view;
       const viewSnapshot = self.snapshotFromUrl(key);
 
       if (!viewSnapshot) return null;
+
       return yield self.addVirtualView(viewSnapshot);
     }),
 
@@ -252,7 +269,7 @@ export const TabStore = types
       // so we need to take in from the list once again
       defaultView = self.views[self.views.length - 1];
       self.selected = defaultView;
-      defaultView.reload();
+      getRoot(self).SDK.hasInterface('tabs') && defaultView.reload();
     }),
 
     snapshotFromUrl(viewQueryParam) {
@@ -285,7 +302,11 @@ export const TabStore = types
       const apiMethod =
         !view.saved && root.apiVersion === 2 ? "createTab" : "updateTab";
 
-      const result = yield root.apiCall(apiMethod, params, body);
+      const result = yield root.apiCall(apiMethod, params, body, { allowToCancel: root.SDK.type === 'DE' });
+
+      if (result.isCanceled) {
+        return view;
+      }
       const viewSnapshot = getSnapshot(view);
       const newViewSnapshot = {
         ...viewSnapshot,
@@ -299,13 +320,12 @@ export const TabStore = types
         self.views.push({ ...newViewSnapshot, saved: true });
         const newView = self.views[self.views.length - 1];
 
-        newView.reload();
+        root.SDK.hasInterface('tabs') && newView.reload();
         self.setSelected(newView);
         destroy(view);
 
         return newView;
       } else {
-        console.log('saved');
         applySnapshot(view, newViewSnapshot);
 
         if (reload !== false) {
@@ -372,7 +392,12 @@ export const TabStore = types
 
         const parentPath = result.join(".");
 
-        result.push(column.id);
+        if (isDefined(column?.id)) {
+          result.push(column.id);
+        } else {
+          console.warn("Column or id is not defined", column);
+          console.warn("Columns", columns);
+        }
 
         const columnPath = result.join(".");
 
@@ -413,7 +438,7 @@ export const TabStore = types
 
         addedColumns.add(column.id);
 
-        if (!col.children && column.filterable) {
+        if (!col.children && column.filterable && (col?.visibility_defaults?.filter ?? true)) {
           self.availableFilters.push({
             id: `filter:${columnID}`,
             type: col.type,
@@ -456,7 +481,7 @@ export const TabStore = types
         pushState: tab === undefined,
       });
 
-      yield self.selected.save();
+      yield self.selected?.save();
 
       if (labeling) {
         getRoot(self).startLabelStream({
@@ -474,7 +499,7 @@ export const TabStore = types
     fetchSingleTab: flow(function * (tabKey, selectedItems) {
       let tab, tabId = parseInt(tabKey);
 
-      if (!Number.isNaN(tabId)) {
+      if (!isNaN(tabKey) && !isNaN(tabId)) {
         const tabData = yield getRoot(self).apiCall("tab", { tabId });
         const columnIds = (self.columns ?? []).map(c => c.id);
         const { data, ...tabClean } = dataCleanup(tabData, columnIds);

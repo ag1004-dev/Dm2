@@ -1,5 +1,6 @@
-import { observer } from "mobx-react";
-import React from "react";
+import { observer, useLocalStore } from "mobx-react";
+import { toJS } from "mobx";
+import React, { forwardRef, useCallback, useEffect, useRef } from "react";
 import {
   ViewColumnType,
   ViewColumnTypeName,
@@ -16,8 +17,12 @@ import { TableCell, TableCellContent } from "../TableCell/TableCell";
 import { TableContext, TableElem } from "../TableContext";
 import { getStyle } from "../utils";
 import "./TableHead.styl";
+import { FF_DEV_2984, FF_DEV_3873, FF_LOPS_E_10, isFF } from "../../../../utils/feature-flags";
+import { getRoot } from "mobx-state-tree";
 
 const { Block, Elem } = BemWithSpecifiContext();
+
+const is2984FF = isFF(FF_DEV_2984);
 
 const DropdownWrapper = observer(
   ({ column, cellViews, children, onChange }) => {
@@ -31,6 +36,23 @@ const DropdownWrapper = observer(
 
         return cellView && (selectable && displayType);
       });
+
+    const styles = {
+      flex: 1,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      background: "none",
+      fontSize: 14,
+    };
+    
+    if ( isFF( FF_LOPS_E_10 ) ) {
+      styles.border = "0 none";
+      styles.fontWeight =  500;
+      styles.fontSize =  16;
+      styles.lineHeight =  24;
+      styles.letterSpacing =  0.15;
+    }
 
     return (
       <Dropdown.Trigger
@@ -66,14 +88,7 @@ const DropdownWrapper = observer(
         <Button
           type="text"
           size="small"
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            background: "none",
-            fontSize: 14,
-          }}
+          style={styles}
         >
           {children}
         </Button>
@@ -106,9 +121,11 @@ const ColumnRenderer = observer(
       );
     }
 
+    const root = getRoot(column.original);
+    const isDE = root.SDK.type === "DE";
     const canOrder = sortingEnabled && column.original?.canOrder;
     const Decoration = decoration?.get?.(column);
-    const extra = columnHeaderExtra
+    const extra = !isDE && columnHeaderExtra
       ? columnHeaderExtra(column, Decoration)
       : null;
     const content = Decoration?.content
@@ -139,15 +156,12 @@ const ColumnRenderer = observer(
             justifyContent: style.justifyContent ?? "space-between",
             overflow: "hidden",
           }}
-          handleStyle={{
-            marginLeft: 9,
-          }}
           initialWidth={style.width ?? 150}
           minWidth={style.minWidth ?? 30}
           onResizeFinished={(width) => onResize?.(column, width)}
           onReset={() => onReset?.(column)}
         >
-          {column.parent ? (
+          {!isDE && column.parent ? (
             <DropdownWrapper
               column={column}
               cellViews={cellViews}
@@ -165,7 +179,7 @@ const ColumnRenderer = observer(
 );
 
 export const TableHead = observer(
-  React.forwardRef(
+  forwardRef(
     (
       {
         style,
@@ -177,6 +191,7 @@ export const TableHead = observer(
         onResize,
         onReset,
         extra,
+        onDragEnd,
       },
       ref,
     ) => {
@@ -184,35 +199,153 @@ export const TableHead = observer(
         TableContext,
       );
 
-      console.log({ columns });
+      if (is2984FF) {
+        const states = useLocalStore(() => ({
+          orderedColumns: {},
+          setOrderedColumns(updatedColumns) {
+            states.orderedColumns = { ...updatedColumns };
+          },
+          getOrderedColumns() {
+            return toJS(states.orderedColumns) ?? {};
+          },
+          isDragging: false,
+          setIsDragging(isDragging) {
+            states.isDragging = isDragging;
+          },
+          getIsDragging() {
+            return toJS(states.isDragging);
+          },
+          initialDragPos: false,
+          setInitialDragPos(initPos) {
+            states.initialDragPos = initPos;
+          },
+          getInitialDragPos() {
+            return toJS(states.initialDragPos);
+          },
+          draggedCol: null,
+          setDraggedCol(draggedCol) {
+            states.draggedCol = draggedCol;
+          },
+          getDraggedCol() {
+            return toJS(states.draggedCol);
+          },
+        }));
+        let colRefs = useRef({});
+        const getUpdatedColOrder = useCallback((cols) => {
+          const orderedColumns = {};
+  
+          (cols ?? columns).forEach((col, colIndex) => {
+            orderedColumns[col.id] = colIndex;
+          });
+          return orderedColumns;
+        }, [columns]);
 
-      return (
-        <Block
-          name="table-head"
-          ref={ref}
-          style={style}
-          mix="horizontal-shadow"
-        >
-          {columns.map((col) => {
-            return (
-              <ColumnRenderer
-                key={col.id}
-                column={col}
-                headerRenderers={headerRenderers}
-                cellViews={cellViews}
-                columnHeaderExtra={columnHeaderExtra}
-                sortingEnabled={sortingEnabled}
-                stopInteractions={stopInteractions}
-                decoration={decoration}
-                onTypeChange={onTypeChange}
-                onResize={onResize}
-                onReset={onReset}
-              />
-            );
-          })}
-          <Elem name="extra">{extra}</Elem>
-        </Block>
-      );
+        useEffect(() => {
+          ref.current?.addEventListener("mousedown", (event) => {
+            if (event.target.className.includes("handle")) event.preventDefault();
+          });
+        }, [],
+        );
+  
+        return (
+          <Block
+            name="table-head"
+            ref={ref}
+            style={{
+              ...style,
+              height: isFF(FF_DEV_3873) && 42,
+            }}
+            mod={{ droppable: true }}
+            mix="horizontal-shadow"
+            onDragOver={useCallback((e) => {
+              const draggedCol = states.getDraggedCol();
+  
+              colRefs.current[draggedCol].style.setProperty("--scale", "0");
+              e.stopPropagation();
+            }, [states])}
+          >
+            {columns.map((col) => {
+              
+              return (
+                <Elem name="draggable" draggable={true} ref={(ele) => colRefs.current[col.id] = ele} key={col.id}
+                  onDragStart={(e) => {  
+                    e.dataTransfer.effectAllowed = "none";
+                    const ele = colRefs.current[col.id];
+  
+                    states.setInitialDragPos({
+                      x: ele.offsetLeft,
+                      y: ele.offsetTop,
+                    });
+                    states.setDraggedCol(col.id);
+                  }}
+                  onDragEnd={(e) => {
+                    e.stopPropagation();
+                    const draggedCol = states.getDraggedCol();
+                    const curColumns = columns.filter(curCol => curCol.id !== draggedCol);
+                    const newIndex = curColumns.findIndex((curCol) => {
+                      const colRefrence = colRefs.current[curCol.id];
+                      const mousePos = e.clientX + (ref?.current?.parentElement.scrollLeft ?? 0);
+                      let isGreaterThanPos = mousePos < (colRefrence.offsetLeft + (colRefrence.clientWidth / 2));
+        
+                      return isGreaterThanPos;
+                    });
+        
+                    colRefs.current[draggedCol].style.setProperty("--scale", "");
+        
+                    states.setDraggedCol(null);
+                    curColumns.splice(newIndex, 0, col);
+                    const updatedColOrder = getUpdatedColOrder(curColumns);
+        
+                    onDragEnd?.(updatedColOrder);
+                  }}>
+                  <ColumnRenderer
+                    column={col}
+                    mod={{ draggable: true }}
+                    headerRenderers={headerRenderers}
+                    cellViews={cellViews}
+                    columnHeaderExtra={columnHeaderExtra}
+                    sortingEnabled={sortingEnabled}
+                    stopInteractions={stopInteractions}
+                    decoration={decoration}
+                    onTypeChange={onTypeChange}
+                    onResize={onResize}
+                    onReset={onReset}
+                  />
+                </Elem>
+              );
+            })}
+            <Elem name="extra">{extra}</Elem>
+          </Block>
+        );
+      } else {
+        return (
+          <Block
+            name="table-head"
+            ref={ref}
+            style={style}
+            mix="horizontal-shadow"
+          >
+            {columns.map((col) => {
+              return (
+                <ColumnRenderer
+                  key={col.id}
+                  column={col}
+                  headerRenderers={headerRenderers}
+                  cellViews={cellViews}
+                  columnHeaderExtra={columnHeaderExtra}
+                  sortingEnabled={sortingEnabled}
+                  stopInteractions={stopInteractions}
+                  decoration={decoration}
+                  onTypeChange={onTypeChange}
+                  onResize={onResize}
+                  onReset={onReset}
+                />
+              );
+            })}
+            <Elem name="extra">{extra}</Elem>
+          </Block>
+        );
+      }
     },
   ),
 );

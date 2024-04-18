@@ -1,6 +1,8 @@
 import { flow, getRoot, types } from "mobx-state-tree";
 import { guidGenerator } from "../../utils/random";
 import { isDefined } from "../../utils/utils";
+import { DEFAULT_PAGE_SIZE, getStoredPageSize } from "../../components/Common/Pagination/Pagination";
+import { FF_DEV_1470, FF_LOPS_E_3, isFF } from "../../utils/feature-flags";
 
 const listIncludes = (list, id) => {
   const index =
@@ -14,7 +16,7 @@ const listIncludes = (list, id) => {
 const MixinBase = types
   .model("InfiniteListMixin", {
     page: types.optional(types.integer, 0),
-    pageSize: types.optional(types.integer, 30),
+    pageSize: types.optional(types.integer, getStoredPageSize("tasks", DEFAULT_PAGE_SIZE)),
     total: types.optional(types.integer, 0),
     loading: false,
     loadingItem: false,
@@ -56,6 +58,9 @@ const MixinBase = types
 
       if (typeof val === "number") {
         selected = self.list.find((t) => t.id === val);
+        if (!selected) {
+          selected = getRoot(self).taskStore.loadTask(val);
+        }
       } else {
         selected = val;
       }
@@ -77,7 +82,7 @@ const MixinBase = types
       if (withHightlight) self.highlighted = undefined;
     },
 
-    setList({ list, total, reload }) {
+    setList({ list, total, reload, associatedList = [] }) {
       const newEntity = list.map((t) => ({
         ...t,
         source: JSON.stringify(t),
@@ -98,6 +103,9 @@ const MixinBase = types
       } else {
         self.list.push(...newEntity);
       }
+
+      self.associatedList = associatedList;
+
     },
 
     setLoading(id) {
@@ -126,7 +134,7 @@ const MixinBase = types
 
 export const DataStore = (
   modelName,
-  { listItemType, apiMethod, properties },
+  { listItemType, apiMethod, properties, associatedItemType },
 ) => {
   const model = types
     .model(modelName, {
@@ -134,6 +142,7 @@ export const DataStore = (
       list: types.optional(types.array(listItemType), []),
       selectedId: types.optional(types.maybeNull(types.number), null),
       highlightedId: types.optional(types.maybeNull(types.number), null),
+      ...(associatedItemType ? { associatedList: types.optional(types.maybeNull(types.array(associatedItemType)), []) } : {}),
     })
     .views((self) => ({
       get selected() {
@@ -172,12 +181,13 @@ export const DataStore = (
       fetch: flow(function* ({ id, query, pageNumber = null, reload = false, interaction, pageSize } = {}) {
         let currentViewId, currentViewQuery;
         const requestId = self.requestId = guidGenerator();
+        const root = getRoot(self);
 
         if (id) {
           currentViewId = id;
           currentViewQuery = query;
         } else {
-          const currentView = getRoot(self).viewsStore.selected;
+          const currentView = root.viewsStore.selected;
 
           currentViewId = currentView?.id;
           currentViewQuery = currentView?.virtual ? currentView?.query : null;
@@ -187,7 +197,6 @@ export const DataStore = (
 
         self.loading = true;
 
-        if (reload || isDefined(pageNumber)) {
           if (self.page === 0)
             self.page = 1;
           else if (isDefined(pageNumber))
@@ -196,7 +205,11 @@ export const DataStore = (
           self.page++;
         }
 
-        if (pageSize) self.pageSize = pageSize;
+        if (pageSize) {
+          self.pageSize = pageSize;
+        } else {
+          self.pageSize = getStoredPageSize("tasks", DEFAULT_PAGE_SIZE);
+        }
 
         const params = {
           page: self.page,
@@ -211,24 +224,30 @@ export const DataStore = (
 
         if (interaction) Object.assign(params, { interaction });
 
-        const data = yield getRoot(self).apiCall(apiMethod, params);
+        const data = yield root.apiCall(apiMethod, params, {}, { allowToCancel: root.SDK.type === 'DE' });
 
         // We cancel current request processing if request id
-        // cnhaged during the request. It indicates that something
+        // changed during the request. It indicates that something
         // triggered another request while current one is not yet finished
-        if (requestId !== self.requestId) {
+        if (requestId !== self.requestId || data.isCanceled) {
           console.log(`Request ${requestId} was cancelled by another request`);
           return;
         }
 
         const highlightedID = self.highlighted;
-
+        const apiMethodSettings = root.API.getSettingsByMethodName(apiMethod);
         const { total, [apiMethod]: list } = data;
+        let associatedList = [];
+
+        if (isFF(FF_LOPS_E_3) && apiMethodSettings?.associatedType) {
+          associatedList = data[apiMethodSettings?.associatedType];
+        }
 
         if (list) self.setList({
           total,
           list,
           reload: reload || isDefined(pageNumber),
+          associatedList,
         });
 
         if (isDefined(highlightedID) && !listIncludes(self.list, highlightedID)) {
@@ -239,7 +258,7 @@ export const DataStore = (
 
         self.loading = false;
 
-        getRoot(self).SDK.invoke('dataFetched', self);
+        root.SDK.invoke('dataFetched', self);
       }),
 
       reload: flow(function* ({ id, query, interaction } = {}) {
@@ -251,6 +270,8 @@ export const DataStore = (
 
         self.highlighted = self.list[index];
         self.updated = guidGenerator();
+
+        return self.highlighted;
       },
 
       focusNext() {
@@ -261,6 +282,8 @@ export const DataStore = (
 
         self.highlighted = self.list[index];
         self.updated = guidGenerator();
+
+        return self.highlighted;
       },
     }));
 

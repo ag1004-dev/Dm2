@@ -8,6 +8,9 @@ export const APIConfig = {
     /** users list */
     users: "/../users",
 
+    /** user info */
+    user: "/../users/:pk",
+
     /** Available columns/fields of the dataset */
     columns: "/columns",
 
@@ -44,6 +47,9 @@ export const APIConfig = {
     /** List of tasks (samples) in the dataset */
     tasks: "/tasks",
 
+    /** List of task history */
+    taskHistory: "/../projects/:projectId/label-stream-history",
+
     /** Per-task annotations (annotations, predictions) */
     annotations: "/views/:tabID/annotations",
 
@@ -55,6 +61,12 @@ export const APIConfig = {
 
     /** Single annotation */
     annotation: "/tasks/:taskID/annotations/:id",
+
+    /** Presign url */
+    presignUrlForTask: "/../../tasks/:taskID/presign",
+
+    /** Presign url outside of task context */
+    presignUrlForProject: "/../../projects/:projectId/presign",
 
     /** Submit annotation */
     submitAnnotation: {
@@ -101,6 +113,13 @@ export const APIConfig = {
       method: "post",
     },
 
+
+    /** Convert an annotation to draft */
+    convertToDraft: {
+      path: "/../annotations/:annotationID/convert-to-draft",
+      method: "post",
+    },
+
     /** Override selected items list (checkboxes) */
     setSelectedItems: {
       path: "/views/:tabID/selected-items",
@@ -125,6 +144,35 @@ export const APIConfig = {
     /** Invoke a particular action */
     invokeAction: {
       path: "/actions",
+      method: "post",
+    },
+
+    /** List comments ?annotation=<annotation_id> **/
+    listComments: "/../comments",
+
+    /** Create a new comment **/
+    createComment: {
+      path: "/../comments",
+      method: "post",
+    },
+
+    /** Update a comment **/
+    updateComment: {
+      path: "/../comments/:id",
+      method: "patch",
+    },
+
+    /** Update a comment **/
+    deleteComment: {
+      path: "/../comments/:id",
+      method: "delete",
+    },
+
+    mlBackends: "/../ml",
+
+    // Test for LLM assistant
+    mlInteractive: {
+      path: "/../ml/:pk/interactive-annotating",
       method: "post",
     },
   },

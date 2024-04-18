@@ -1,9 +1,10 @@
 import { getRoot, getSnapshot, types } from "mobx-state-tree";
 import React from "react";
 import { toStudlyCaps } from "strman";
-import { LsAnnotation, LsBanSquare, LsSparkSquare, LsStarSquare, LsThumbsDown, LsThumbsUp } from "../../assets/icons";
+import { CommentCheck, CommentRed, LsAnnotation, LsBanSquare, LsSparkSquare, LsStarSquare, LsThumbsDown, LsThumbsUp } from "../../assets/icons";
 import * as CellViews from "../../components/CellViews";
 import { all } from "../../utils/utils";
+import { StringOrNumberID } from "../types";
 
 export const ViewColumnType = types.enumeration([
   "String",
@@ -14,6 +15,7 @@ export const ViewColumnType = types.enumeration([
   "Image",
   "Audio",
   "AudioPlus",
+  "Video",
   "Text",
   "HyperText",
   "TimeSeries",
@@ -37,6 +39,8 @@ export const ViewColumnTypeShort = (type) => {
       return "aud";
     case "AudioPlus":
       return "aud";
+    case "Video":
+      return "vid";
     case "Text":
       return "txt";
     case "HyperText":
@@ -62,7 +66,9 @@ export const ViewColumnTypeName = (type) => {
     case "Audio":
       return "Audio";
     case "AudioPlus":
-      return "AudioPlus";
+      return "Audio";
+    case "Video":
+      return "Video";
     case "Text":
       return "Text";
     case "HyperText":
@@ -74,7 +80,7 @@ export const ViewColumnTypeName = (type) => {
 
 export const TabColumn = types
   .model("ViewColumn", {
-    id: types.identifier,
+    id: StringOrNumberID,
     title: types.string,
     alias: types.string,
     type: types.optional(ViewColumnType, "String"),
@@ -192,6 +198,10 @@ export const TabColumn = types
           return <LsThumbsDown width="20" height="20" style={{ color: '#DD0000' }}/>;
         case "ground_truth":
           return <LsStarSquare width="20" height="20" style={{ color: '#FFB700' }}/>;
+        case "comment_count":
+          return <CommentCheck width="20" height="20" style={{ color: '#FFB700' }} />;
+        case "unresolved_comment_count":
+          return <CommentRed width="20" height="20" style={{ color: '#FFB700' }}/>;
       }
     },
 
