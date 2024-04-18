@@ -197,9 +197,6 @@ export const DataStore = (
 
         self.loading = true;
 
-        if(interaction === "filter" || ((!isFF(FF_DEV_1470)) && interaction === "ordering") || ((!isFF(FF_DEV_1470)) && reload)) {
-          self.page = 1;
-        } else if (reload || isDefined(pageNumber)) {
           if (self.page === 0)
             self.page = 1;
           else if (isDefined(pageNumber))
