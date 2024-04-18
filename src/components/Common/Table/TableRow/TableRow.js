@@ -5,6 +5,8 @@ import { Block } from "../../../../utils/bem";
 import { TableContext, TableElem } from "../TableContext";
 import { getProperty, getStyle } from "../utils";
 import "./TableRow.styl";
+import { SkeletonLoader } from "../../SkeletonLoader";
+import { FF_LOPS_E_3, isFF } from "../../../../utils/feature-flags";
 
 const CellRenderer = observer(
   ({ col: colInput, data, decoration, cellViews }) => {
@@ -29,6 +31,7 @@ const CellRenderer = observer(
     const renderProps = { column: col, original: data, value };
     const Decoration = decoration?.get?.(col);
     const style = getStyle(cellViews, col, Decoration);
+    const cellIsLoading = isFF(FF_LOPS_E_3) && data.loading === colInput.alias;
 
     return (
       <TableElem name="cell">
@@ -37,40 +40,55 @@ const CellRenderer = observer(
             ...(style ?? {}),
             display: "flex",
             height: "100%",
-            alignItems: "center",
+            alignItems: cellIsLoading ? "" : "center",
           }}
         >
-          {Renderer ? <Renderer {...renderProps} /> : value}
+          {cellIsLoading ? <SkeletonLoader /> : (Renderer ? <Renderer {...renderProps} /> : value)}
         </div>
       </TableElem>
     );
   },
 );
 
-export const TableRow = observer(({ data, style, decoration }) => {
+export const TableRow = observer(({ data, even, style, wrapperStyle, onClick, stopInteractions, decoration }) => {
   const classNames = ["table-row"];
 
   if (data.isLoading) classNames.push("loading");
 
   const { columns, cellViews } = React.useContext(TableContext);
 
+  const mods = {
+    even,
+    selected: data.isSelected,
+    highlighted: data.isHighlighted,
+    loading: data.isLoading,
+    disabled: stopInteractions,
+  };
+
   return (
-    <Block
-      name="table-row"
-      style={style}
-      className={classNames.join(" ")}
+    <TableElem
+      name="row-wrapper"
+      mod={mods}
+      style={wrapperStyle}
+      onClick={(e) => onClick?.(data, e)}
     >
-      {columns.map((col) => {
-        return (
-          <CellRenderer
-            key={col.id}
-            col={col}
-            data={data}
-            cellViews={cellViews}
-            decoration={decoration}
-          />
-        );
-      })}
-    </Block>
+      <Block
+        name="table-row"
+        style={style}
+        className={classNames.join(" ")}
+      >
+        {columns.map((col) => {
+          return (
+            <CellRenderer
+              key={col.id}
+              col={col}
+              data={data}
+              cellViews={cellViews}
+              decoration={decoration}
+            />
+          );
+        })}
+      </Block>
+    </TableElem>
   );
 });

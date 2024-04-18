@@ -1,7 +1,8 @@
 import { flow, getParent, getRoot, types } from "mobx-state-tree";
 import { toStudlyCaps } from "strman";
 import * as Filters from "../../components/Filters/types";
-import * as CellViews from "../../components/Table/CellViews";
+import * as CellViews from "../../components/CellViews";
+import { allowedFilterOperations } from "../../components/Filters/types/Utility";
 import { debounce } from "../../utils/debounce";
 import { isBlank, isDefined } from "../../utils/utils";
 import {
@@ -53,7 +54,9 @@ export const TabFilter = types
     },
 
     get component() {
-      return Filters[self.filter.currentType] ?? Filters.String;
+      const operationsList = Filters[self.filter.currentType] ?? Filters.String;
+
+      return allowedFilterOperations(operationsList, getRoot(self)?.SDK?.type);
     },
 
     get componentValueType() {
@@ -118,15 +121,22 @@ export const TabFilter = types
       if (!isDefined(value)) return;
 
       const previousFilterType = self.filter.currentType;
+      const previousFilter = self.filter.id;
 
       self.filter = value;
 
-      if (previousFilterType !== self.filter.currentType) {
+      const typeChanged = previousFilterType !== self.filter.currentType;
+      const filterChanged = previousFilter !== self.filter.id;
+
+      if (typeChanged || filterChanged) {
         self.markUnsaved();
-        self.setDefaultValue();
       }
 
-      self.setOperator(self.component[0].key);
+      if (typeChanged) {
+        self.setDefaultValue();
+        self.setOperator(self.component[0].key);
+      }
+
       if (save) self.saved();
     },
 

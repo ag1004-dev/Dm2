@@ -1,13 +1,14 @@
-import { inject } from "mobx-react";
+import { inject, observer } from "mobx-react";
 import React from "react";
 import { LSPlus } from "../../assets/icons";
 import { Block, Elem } from "../../utils/bem";
+import { FF_LOPS_12, isFF } from "../../utils/feature-flags";
 import { Interface } from "../Common/Interface";
 import { Space } from "../Common/Space/Space";
 import { Spinner } from "../Common/Spinner";
 import { Tabs, TabsItem } from "../Common/Tabs/Tabs";
 import { FiltersSidebar } from "../Filters/FiltersSidebar/FilterSidebar";
-import { DataView } from "../Table/Table";
+import { DataView } from "../MainView";
 import "./DataManager.styl";
 import { Toolbar } from "./Toolbar/Toolbar";
 
@@ -20,19 +21,32 @@ const injector = inject(({ store }) => {
 });
 
 const summaryInjector = inject(({ store }) => {
-  const { project, taskStore } = store;
+  const { project, taskStore, SDK } = store;
 
-  return {
-    totalTasks: project?.task_count ?? 0,
-    totalFoundTasks: taskStore?.total ?? 0,
-    totalAnnotations: taskStore?.totalAnnotations ?? 0,
-    totalPredictions: taskStore?.totalPredictions ?? 0,
-    cloudSync: project.target_syncing ?? project.source_syncing ?? false,
-  };
+  if (isFF(FF_LOPS_12) && SDK?.type === 'labelops') {
+    return {
+      total: taskStore?.total ?? 0,
+      coverage: taskStore?.coverage ?? 'N/A',
+      precision: taskStore?.precision ?? 'N/A',
+      confidence: taskStore?.confidence ?? 'N/A',
+      cloudSync: project.target_syncing ?? project.source_syncing ?? false,
+      SDK,
+    };
+  } else {
+    return {
+      totalTasks: project?.task_count ?? project?.task_number ?? 0,
+      totalFoundTasks: taskStore?.total ?? 0,
+      totalAnnotations: taskStore?.totalAnnotations ?? 0,
+      totalPredictions: taskStore?.totalPredictions ?? 0,
+      cloudSync: project.target_syncing ?? project.source_syncing ?? false,
+    };
+  }
+
 });
 
 const switchInjector = inject(({ store }) => {
   return {
+    sdk: store.SDK,
     views: store.viewsStore,
     tabs: Array.from(store.viewsStore?.all ?? []),
     selectedKey: store.viewsStore?.selected?.key,
@@ -51,20 +65,35 @@ const ProjectSummary = summaryInjector((props) => {
           <Spinner size="small" />
         </Space>
       )}
-      <span style={{ display: "flex", alignItems: "center", fontSize: 12 }}>
-        <Space size="compact">
-          <span>
-            Tasks: {props.totalFoundTasks} / {props.totalTasks}
-          </span>
-          <span>Annotations: {props.totalAnnotations}</span>
-          <span>Predictions: {props.totalPredictions}</span>
-        </Space>
-      </span>
+      {isFF(FF_LOPS_12) && props.SDK?.type === 'labelops' ? (
+        <span style={{ display: "flex", alignItems: "center", fontSize: 12 }}>
+          <Space size="compact">
+            <span>
+              Total: {props.total}
+            </span>
+            <span>GT coverage: {props.coverage}</span>
+            <span>Precision: {props.precision}</span>
+            <span>Confidence: {props.confidence}</span>
+          </Space>
+        </span>
+      ) : (
+        <span style={{ display: "flex", alignItems: "center", fontSize: 12 }}>
+          <Space size="compact">
+            <span>
+              Tasks: {props.totalFoundTasks} / {props.totalTasks}
+            </span>
+            <span>Annotations: {props.totalAnnotations}</span>
+            <span>Predictions: {props.totalPredictions}</span>
+          </Space>
+        </span>
+      )}
     </Space>
   );
 });
 
-const TabsSwitch = switchInjector(({ views, tabs, selectedKey }) => {
+const TabsSwitch = switchInjector(observer(({ sdk, views, tabs, selectedKey }) => {
+  const editable = sdk.tabControls;
+
   return (
     <Tabs
       activeTab={selectedKey}
@@ -72,6 +101,7 @@ const TabsSwitch = switchInjector(({ views, tabs, selectedKey }) => {
       onChange={(key) => views.setSelected(key)}
       tabBarExtraContent={<ProjectSummary />}
       addIcon={<LSPlus />}
+      allowedActions={editable}
     >
       {tabs.map((tab) => (
         <TabsItem
@@ -84,14 +114,16 @@ const TabsSwitch = switchInjector(({ views, tabs, selectedKey }) => {
           }}
           onDuplicate={() => tab.parent.duplicateView(tab)}
           onClose={() => tab.parent.deleteView(tab)}
+          onSave={()=> tab.virtual && tab.saveVirtual()}
           active={tab.key === selectedKey}
           editable={tab.editable}
           deletable={tab.deletable}
+          virtual={tab.virtual}
         />
       ))}
     </Tabs>
   );
-});
+}));
 
 export const DataManager = injector(({ shrinkWidth }) => {
   return (

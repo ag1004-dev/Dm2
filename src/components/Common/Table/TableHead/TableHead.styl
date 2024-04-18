@@ -2,13 +2,16 @@
   display flex
   width 100%
   height 50px
-  z-index 150
+  z-index 1
   font-weight 500
   position sticky
   overflow visible
   background-color #fff
   min-width fit-content
   font-size 14px
+  position sticky
+  top 0
+  border-bottom 1px solid #D8D5DD
 
   &__extra
     flex 1
@@ -18,6 +21,11 @@
     justify-content flex-end
 
   &__column-extra
-    margin-left 10px
+    margin 0 5px 0 10px
     display flex
     align-items center
+  
+  &__draggable
+    --scale 1
+    transform scale(var(--scale));
+    cursor move

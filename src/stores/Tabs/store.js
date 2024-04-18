@@ -15,6 +15,8 @@ import { Tab } from "./tab";
 import { TabColumn } from "./tab_column";
 import { TabFilterType } from "./tab_filter_type";
 import { TabHiddenColumns } from "./tab_hidden_columns";
+import { packJSON } from '../../utils/packJSON';
+import { isEmpty } from "../../utils/helpers";
 
 const storeValue = (name, value) => {
   window.localStorage.setItem(name, value);
@@ -29,6 +31,8 @@ const restoreValue = (name) => {
 
 const dataCleanup = (tab, columnIds) => {
   const { data } = tab;
+
+  if (!data) return { ...tab };
 
   if (data.filters) {
     data.filters.items = data.filters.items.filter(({ filter }) => {
@@ -80,7 +84,7 @@ export const TabStore = types
     sidebarEnabled: restoreValue("sidebarEnabled"),
   })
   .volatile(() => ({
-    defaultHidden: types.optional(TabHiddenColumns, {}),
+    defaultHidden: null,
   }))
   .views((self) => ({
     get all() {
@@ -92,7 +96,9 @@ export const TabStore = types
     },
 
     get columns() {
-      return self.columnsTargetMap.get(self.selected?.target ?? "tasks");
+      const cols = self.columnsTargetMap ?? new Map();
+
+      return cols.get(self.selected?.target ?? "tasks") ?? [];
     },
 
     get dataStore() {
@@ -120,16 +126,24 @@ export const TabStore = types
       let selected;
 
       if (typeof view === "string") {
-        selected = self.views.find((v) => v.key === view);
+        selected = yield self.getViewByKey(view);
       } else if (typeof view === "number") {
         selected = self.views.find((v) => v.id === view);
-      } else {
+      }  else if (view && view.id) {
         selected = self.views.find((v) => v.id === view.id);
+      } 
+      if(!selected) {
+        selected = self.views[0];
+      }
+
+      if (self.views.length === 0 && options.createDefault !== false) {
+        view = null;
+        yield self.createDefaultView();
       }
 
       if (selected && self.selected !== selected) {
-        if (options.pushState !== false) {
-          History.navigate({ tab: selected.id }, true);
+        if (options.pushState !== false || !view) {
+          History.navigate({ tab: selected.tabKey }, true);
         }
 
         self.dataStore.clear();
@@ -166,6 +180,35 @@ export const TabStore = types
       destroy(view);
     }),
 
+    createSnapshot(viewSnapshot = {}) {
+      const isVirtual = !!viewSnapshot?.virtual;
+      const tabStorageKey = isVirtual && viewSnapshot.projectId ? `virtual-tab-${viewSnapshot.projectId}` : null;
+      const existingTabStorage = isVirtual && localStorage.getItem(tabStorageKey);
+      const existingTabStorageParsed = existingTabStorage ? JSON.parse(existingTabStorage) : null;
+      const urlTabIsVirtualCandidate = !!(viewSnapshot?.tab && isNaN(viewSnapshot.tab));
+      const existingTabUrlParsed = isVirtual && urlTabIsVirtualCandidate ? self.snapshotFromUrl(viewSnapshot.tab) : null;
+      const urlTabNotEmpty = !isEmpty(existingTabUrlParsed);
+      const existingTab = urlTabNotEmpty ? existingTabUrlParsed : existingTabStorageParsed;
+      const existingTabKey = urlTabNotEmpty ? viewSnapshot.tab : existingTabStorageParsed?.tab;
+      const snapshot = { ...viewSnapshot, key: existingTabKey, tab: existingTabKey, ...(existingTab ?? viewSnapshot ?? {}) };
+      const lastView = self.views[self.views.length - 1];
+      const newTitle = snapshot.title ?? `New Tab ${self.views.length + 1}`;
+      const newID = snapshot.id ?? (lastView?.id ? lastView.id + 1 : 0);
+
+      const defaultHiddenColumns = self.defaultHidden ? clone(self.defaultHidden) : {
+        explore: [],
+        labeling: [],
+      };
+
+      return {
+        ...snapshot,
+        id: newID,
+        title: newTitle,
+        key: snapshot.key ?? guidGenerator(),
+        hiddenColumns: snapshot.hiddenColumns ?? defaultHiddenColumns,
+      };
+    },
+
     addView: flow(function* (viewSnapshot = {}, options) {
       const {
         autoselect = true,
@@ -173,35 +216,77 @@ export const TabStore = types
         reload = true,
       } = options ?? {};
 
-      const snapshot = viewSnapshot ?? {};
-      const lastView = self.views[self.views.length - 1];
-      const newTitle = `New Tab ${self.views.length + 1}`;
-      const newID = viewSnapshot.id ?? (lastView?.id ? lastView.id + 1 : 0);
-      const newSnapshot = {
-        ...viewSnapshot,
-        id: newID,
-        title: newTitle,
-        key: guidGenerator(),
-        hiddenColumns: snapshot.hiddenColumns ?? clone(self.defaultHidden),
-      };
+      const newSnapshot = self.createSnapshot(viewSnapshot);
 
       self.views.push(newSnapshot);
-      let newView = self.views[self.views.length - 1];
+      const newView = self.views[self.views.length - 1];
 
       if (autosave) {
-        yield newView.save({ reload });
+        // with autosave it will be reloaded anyway
+        yield newView.save({ reload: !autosave && reload });
       }
 
       if (autoselect) {
         const selectedView = self.views[self.views.length - 1];
 
-        console.log('selecting and reloading', selectedView.id);
         self.setSelected(selectedView);
-        selectedView.reload();
       }
 
       return newView;
     }),
+
+    getViewByKey: flow(function*(key) {
+      let view = self.views.find((v) => v.key === key);
+
+      if (view) return view;
+      const viewSnapshot = self.snapshotFromUrl(key);
+
+      if (!viewSnapshot) return null;
+
+      return yield self.addVirtualView(viewSnapshot);
+    }),
+
+    addVirtualView: flow(function*(viewSnapshot) {
+      return yield self.addView(viewSnapshot, {
+        autosave: false,
+        // No need to select 'cause it's a selecting phase
+        autoselect: false,
+      });
+    }),
+
+    createDefaultView: flow(function*() {
+      self.views.push({
+        id: 0,
+        title: "Default",
+        hiddenColumns: self.defaultHidden,
+      });
+
+      let defaultView = self.views[self.views.length - 1];
+
+      yield defaultView.save(defaultView);
+
+      // at this point newly created tab does not exist
+      // so we need to take in from the list once again
+      defaultView = self.views[self.views.length - 1];
+      self.selected = defaultView;
+      getRoot(self).SDK.hasInterface('tabs') && defaultView.reload();
+    }),
+
+    snapshotFromUrl(viewQueryParam) {
+      try {
+        const viewSnapshot = packJSON.parse(viewQueryParam);
+
+        viewSnapshot.key = viewQueryParam;
+        viewSnapshot.virtual = true;
+        return viewSnapshot;
+      } catch {
+        return null;
+      }
+    },
+
+    snapshotToUrl(snapshot) {
+      return packJSON.stringify(snapshot);
+    },
 
     saveView: flow(function* (view, { reload, interaction } = {}) {
       const needsLock = ["ordering", "filter"].includes(interaction);
@@ -217,7 +302,11 @@ export const TabStore = types
       const apiMethod =
         !view.saved && root.apiVersion === 2 ? "createTab" : "updateTab";
 
-      const result = yield root.apiCall(apiMethod, params, body);
+      const result = yield root.apiCall(apiMethod, params, body, { allowToCancel: root.SDK.type === 'DE' });
+
+      if (result.isCanceled) {
+        return view;
+      }
       const viewSnapshot = getSnapshot(view);
       const newViewSnapshot = {
         ...viewSnapshot,
@@ -231,13 +320,12 @@ export const TabStore = types
         self.views.push({ ...newViewSnapshot, saved: true });
         const newView = self.views[self.views.length - 1];
 
-        newView.reload();
+        root.SDK.hasInterface('tabs') && newView.reload();
         self.setSelected(newView);
         destroy(view);
 
         return newView;
       } else {
-        console.log('saved');
         applySnapshot(view, newViewSnapshot);
 
         if (reload !== false) {
@@ -294,20 +382,22 @@ export const TabStore = types
       const createColumnPath = (columns, column) => {
         const result = [];
 
-        if (column.parent) {
-          result.push(
-            createColumnPath(
-              columns,
-              columns.find((c) => {
-                return !c.parent && c.id === column.parent && c.target === column.target;
-              }),
-            ).columnPath,
-          );
+        if (column && column.parent) {
+          const parentColums = columns.find((c) => {
+            return !c.parent && c.id === column.parent && c.target === column.target;
+          });
+
+          result.push(createColumnPath(columns, parentColums).columnPath);
         }
 
         const parentPath = result.join(".");
 
-        result.push(column.id);
+        if (isDefined(column?.id)) {
+          result.push(column.id);
+        } else {
+          console.warn("Column or id is not defined", column);
+          console.warn("Columns", columns);
+        }
 
         const columnPath = result.join(".");
 
@@ -319,9 +409,10 @@ export const TabStore = types
       });
 
       columns.forEach((col) => {
-        const { target, visibility_defaults: visibility } = col;
-
+        if (!isDefined(col)) return;
         const { columnPath, parentPath } = createColumnPath(columns, col);
+
+        const { target, visibility_defaults: visibility } = col;
 
         const columnID = `${target}:${columnPath}`;
 
@@ -347,7 +438,7 @@ export const TabStore = types
 
         addedColumns.add(column.id);
 
-        if (!col.children && column.filterable) {
+        if (!col.children && column.filterable && (col?.visibility_defaults?.filter ?? true)) {
           self.availableFilters.push({
             id: `filter:${columnID}`,
             type: col.type,
@@ -367,7 +458,8 @@ export const TabStore = types
       self.defaultHidden = TabHiddenColumns.create(hiddenColumns);
     },
 
-    fetchTabs: flow(function* (tabID, taskID, labeling) {
+    fetchTabs: flow(function* (tab, taskID, labeling) {
+      const tabId = parseInt(tab);
       const response = yield getRoot(self).apiCall("tabs");
       const tabs = response.tabs ?? response ?? [];
       const columnIds = self.columns.map(c => c.id);
@@ -385,39 +477,11 @@ export const TabStore = types
 
       self.views.push(...snapshots);
 
-      let defaultView = self.views[0];
-
-      if (self.views.length === 0) {
-        tabID = null;
-
-        self.views.push({
-          id: 0,
-          title: "Default",
-          hiddenColumns: self.defaultHidden,
-        });
-
-        defaultView = self.views[self.views.length - 1];
-
-        yield defaultView.save(defaultView);
-
-        // at this point newly created tab does not exist
-        // so we need to take in from the list once again
-        defaultView = self.views[self.views.length - 1];
-        self.selected = defaultView;
-        defaultView.reload();
-      }
-
-      const selected = tabID
-        ? self.views.find((view) => {
-          return view.id === parseInt(tabID);
-        })
-        : null;
-
-      yield self.setSelected(selected ?? defaultView, {
-        pushState: tabID === undefined,
+      yield self.setSelected(Number.isNaN(tabId) ? tab : tabId, {
+        pushState: tab === undefined,
       });
 
-      yield self.selected.save();
+      yield self.selected?.save();
 
       if (labeling) {
         getRoot(self).startLabelStream({
@@ -432,23 +496,28 @@ export const TabStore = types
       }
     }),
 
-    fetchSingleTab: flow(function * (tabId, selectedItems) {
-      const tabData = yield getRoot(self).apiCall("tab", { tabId });
-      const columnIds = self.columns.map(c => c.id);
-      const { data, ...tabClean } = dataCleanup(tabData, columnIds);
+    fetchSingleTab: flow(function * (tabKey, selectedItems) {
+      let tab, tabId = parseInt(tabKey);
 
-      self.views.push({
-        ...tabClean,
-        ...(data ?? {}),
-        selected: {
-          all: selectedItems?.all,
-          list: selectedItems.included ?? selectedItems.excluded ?? [],
-        },
-        saved: true,
-        hasData: !!data,
-      });
+      if (!isNaN(tabKey) && !isNaN(tabId)) {
+        const tabData = yield getRoot(self).apiCall("tab", { tabId });
+        const columnIds = (self.columns ?? []).map(c => c.id);
+        const { data, ...tabClean } = dataCleanup(tabData, columnIds);
 
-      const tab = self.views[self.views.length - 1];
+        self.views.push({
+          ...tabClean,
+          ...(data ?? {}),
+          selected: {
+            all: selectedItems?.all,
+            list: selectedItems.included ?? selectedItems.excluded ?? [],
+          },
+          saved: true,
+          hasData: !!data,
+        });
+        tab = self.views[self.views.length - 1];
+      } else {
+        tab = yield self.getViewByKey(tabKey);
+      }
 
       self.selected = tab;
     }),

@@ -11,7 +11,7 @@ const Arrow = ({ rotate }) => (
 
 const injector = inject(({ store }) => {
   const { dataStore, currentView } = store;
-  const totalTasks = store.project?.task_count ?? 0;
+  const totalTasks = store.project?.task_count ?? store.project?.task_number ?? 0;
   const foundTasks = dataStore?.total ?? 0;
 
   return {
@@ -93,7 +93,7 @@ export const LabelButton = injector(({ store, canLabel, size, target, selectedCo
           <Button
             size={size}
             disabled={disabled}
-            mod={{ size: "medium", look: "primary", disabled }}
+            mod={{ size: size ?? "medium", look: "primary", disabled }}
             style={primaryStyle}
             onClick={onLabelAll}
           >
@@ -102,7 +102,7 @@ export const LabelButton = injector(({ store, canLabel, size, target, selectedCo
           <Button
             ref={triggerRef}
             size={size}
-            mod={{ size: "medium", look: "primary", disabled }}
+            mod={{ size: size ?? "medium", look: "primary", disabled }}
             style={triggerStyle}
             onClick={toggleOpen}
           >
@@ -112,7 +112,7 @@ export const LabelButton = injector(({ store, canLabel, size, target, selectedCo
         <Button
           size={size}
           style={secondStyle}
-          mod={{ size: "medium", disabled }}
+          mod={{ size: size ?? "medium", disabled }}
           onClick={onLabelVisible}
         >
           Label Tasks As Displayed

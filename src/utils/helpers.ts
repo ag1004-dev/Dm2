@@ -1,5 +1,4 @@
 import { toCamelCase } from 'strman';
-import { isDefined } from './utils';
 
 export const formDataToJPO = (formData: FormData) => {
   if (formData instanceof FormData) {
@@ -29,6 +28,18 @@ export const filename = (string: string) => {
 
 export const isEmptyString = (value: any) => {
   return typeof value === 'string' && value.trim().length === 0;
+};
+
+export const isEmptyObject = (value: any) => {
+  return (typeof value === 'object' && !value || Object.keys(value).length === 0);
+};
+
+export const isEmptyArray = (value: any) => {
+  return Array.isArray(value) && value.length === 0;
+};
+
+export const isEmpty = (value: any) => {
+  return isEmptyString(value) || isEmptyObject(value) || isEmptyArray(value);
 };
 
 type CamelCase<S extends string> = S extends `${infer P1}_${infer P2}${infer P3}`
@@ -87,4 +98,19 @@ export const objectClean = <T extends AnyObject>(source: T) => {
 
 export const clamp = (value: number, min: number, max: number) => {
   return Math.max(min, Math.min(value, max));
+};
+
+export const absoluteURL = (path = "") => {
+  if (path.match(/^https?/) || path.match(/^\/\//)) {
+    return path;
+  } else {
+    return [
+      APP_SETTINGS.hostname.replace(/([/]+)$/, ''),
+      path.replace(/^([/]+)/, ''),
+    ].join("/");
+  }
+};
+
+export const isDefined = <T>(value?: T): value is NonNullable<T> => {
+  return value !== null && value !== undefined;
 };

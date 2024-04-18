@@ -13,10 +13,17 @@ import { normalizeFilterValue } from './filter_utils';
 import { TabFilter } from "./tab_filter";
 import { TabHiddenColumns } from "./tab_hidden_columns";
 import { TabSelectedItems } from "./tab_selected_items";
+import { History } from '../../utils/history';
+import { FF_DEV_1470, FF_LOPS_12, isFF } from "../../utils/feature-flags";
+import { CustomJSON, StringOrNumberID, ThresholdType } from "../types";
+import { clamp } from "../../utils/helpers";
+
+const THRESHOLD_MIN = 0;
+const THRESHOLD_MIN_DIFF = 0.001;
 
 export const Tab = types
   .model("View", {
-    id: types.identifierNumber,
+    id: StringOrNumberID,
 
     title: "Tasks",
     oldTitle: types.maybeNull(types.string),
@@ -47,11 +54,14 @@ export const Tab = types
     locked: false,
     editable: true,
     deletable: true,
+    semantic_search: types.optional(types.array(CustomJSON), []),
+    threshold: types.optional(types.maybeNull(ThresholdType), null),
   })
   .volatile(() => {
-    const defaultWidth = window.innerWidth * 0.35;
+    const defaultWidth = getComputedStyle(document.body).getPropertyValue("--menu-sidebar-width").replace("px", "").trim();
+
     const labelingTableWidth = parseInt(
-      localStorage.getItem("labelingTableWidth") ?? defaultWidth,
+      localStorage.getItem("labelingTableWidth") ?? defaultWidth ?? 200,
     );
 
     return {
@@ -142,8 +152,6 @@ export const Tab = types
           type: el.filter.currentType,
         };
 
-        console.log({ filterItem });
-
         filterItem.value = normalizeFilterValue(
           filterItem.type,
           filterItem.operator,
@@ -172,7 +180,32 @@ export const Tab = types
       };
     },
 
+    // key used in urls
+    get tabKey() {
+      return self.virtual ? self.key : self.id;
+    },
+
+    get hiddenColumnsSnapshot() {
+      return getSnapshot(self.hiddenColumns);
+    },
+
+    get query() {
+      return JSON.stringify({
+        filters: self.filterSnposhot,
+        ordering: self.ordering.toJSON(),
+        hiddenColumns: self.hiddenColumnsSnapshot,
+      });
+    },
+
     serialize() {
+      if (self.virtual) {
+        return {
+          title: self.title,
+          filters: self.filterSnposhot,
+          ordering: self.ordering.toJSON(),
+        };
+      }
+
       const tab = {};
       const { apiVersion } = self.root;
 
@@ -186,6 +219,8 @@ export const Tab = types
         columnsWidth: self.columnsWidth.toPOJO(),
         columnsDisplayType: self.columnsDisplayType.toPOJO(),
         gridWidth: self.gridWidth,
+        semantic_search: self.semantic_search?.toJSON() ?? [],
+        threshold: self.threshold?.toJSON(),
       };
 
       if (self.saved || apiVersion === 1) {
@@ -199,6 +234,7 @@ export const Tab = types
         Object.assign(tab, data);
       }
 
+      self.root.SDK.invoke("tabTypeChanged", { tab: tab.id, type: self.type });
       return tab;
     },
   }))
@@ -216,7 +252,8 @@ export const Tab = types
 
     setType(type) {
       self.type = type;
-      self.save();
+      self.root.SDK.invoke("tabTypeChanged", { tab: self.id, type });
+      self.save({ reload: isFF(FF_DEV_1470) });
     },
 
     setTarget(target) {
@@ -268,6 +305,32 @@ export const Tab = types
 
     setSelected(ids) {
       self.selected = ids;
+    },
+
+    setSemanticSearch(semanticSearchList, min, max) {
+      self.semantic_search = semanticSearchList ?? [];
+      /* if no semantic search we have to clean up threshold */
+      if (self.semantic_search.length === 0) {
+        self.threshold = null;
+        return self.save();
+      }
+      /* if we have a min and max we need to make sure we save that too.
+      this prevents firing 2 view save requests to accomplish the same thing */
+      return ( !isNaN(min) && !isNaN(max) ) ? self.setSemanticSearchThreshold(min, max) : self.save();
+    },
+    
+    setSemanticSearchThreshold(_min, max) {
+      const min = clamp(_min ?? THRESHOLD_MIN, THRESHOLD_MIN, max - THRESHOLD_MIN_DIFF);
+
+      if (self.semantic_search?.length && !isNaN(min) && !isNaN(max)) {
+        self.threshold = { min, max };
+        return self.save();
+      }
+    },
+
+    clearSemanticSearchThreshold(save = true) {
+      self.threshold = null;
+      return save && self.save();
     },
 
     selectAll() {
@@ -331,6 +394,13 @@ export const Tab = types
       if (self.saved) {
         yield self.dataStore.reload({ id: self.id, interaction });
       }
+      if (self.virtual) {
+        yield self.dataStore.reload({ query: self.query, interaction });
+      } else if (isFF(FF_LOPS_12) && self.root.SDK?.type === 'labelops') {
+        yield self.dataStore.reload({ query: self.query, interaction });
+      }
+
+      getRoot(self).SDK?.invoke?.("tabReloaded", self);
     }),
 
     deleteFilter(filter) {
@@ -355,8 +425,44 @@ export const Tab = types
 
       if (!self.saved || !deepEqual(self.snapshot, serialized)) {
         self.snapshot = serialized;
-        yield self.parent.saveView(self, { reload, interaction });
+        if (self.virtual === true) {
+          const snapshot = self.serialize();
+
+          self.key = self.parent.snapshotToUrl(snapshot);
+
+          const projectId = self.root.SDK.projectId;
+
+          // Save the virtual tab of the project to local storage to persist between page navigations
+          if (projectId) {
+            localStorage.setItem(`virtual-tab-${projectId}`, JSON.stringify(snapshot));
+          }
+
+          History.navigate({ tab: self.key }, true);
+          self.reload({ interaction });
+        } else if (isFF(FF_LOPS_12) && self.root.SDK?.type === 'labelops') {
+          const snapshot = self.serialize();
+
+          self.key = self.parent.snapshotToUrl(snapshot);
+
+          const projectId = self.root.SDK.projectId;
+
+          // Save the virtual tab of the project to local storage to persist between page navigations
+          if (projectId) {
+            localStorage.setItem(`virtual-tab-${projectId}`, JSON.stringify(snapshot));
+          }
+
+          History.navigate({ tab: self.key }, true);
+          self.reload({ interaction });
+        } else {
+          yield self.parent.saveView(self, { reload, interaction });
+        }
       }
+    }),
+
+    saveVirtual: flow(function* (options) {
+      self.virtual = false;
+      yield self.save(options);
+      History.navigate({ tab: self.id }, true);
     }),
 
     delete: flow(function* () {
